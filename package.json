@@ -35,24 +35,6 @@
         ]
       }
     ],
-    "viewsContainers": {
-      "activitybar": [
-        {
-          "id": "chatbot",
-          "title": "ChatBot",
-          "icon": "media/sideBar.svg"
-        }
-      ]
-    },
-    "views": {
-      "chatbot": [
-        {
-          "type": "webview",
-          "id": "chatbot.chatView",
-          "name": "Chat & Schedule"
-        }
-      ]
-    },
     "commands": [
       {
         "command": "chatbot.scheduleMessage",

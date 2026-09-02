@@ -1,7 +1,8 @@
 /**
  * How a scheduled message is delivered when its time comes.
- * - 'chat': opens the native chat panel and submits the message as a query
- *   (you can start it with an @participant, #file, etc.)
+ * - 'chat': the message is submitted into the native chat panel. It goes to
+ *   the chat widget that last had focus (`lastFocusedWidget` inside VS Code)
+ *   — i.e. the chat the user was working in, not a new one.
  * - 'notification': shows an information notification.
  */
 export type Delivery = 'chat' | 'notification';

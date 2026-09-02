@@ -1,5 +1,4 @@
 import * as vscode from 'vscode';
-import { ChatViewProvider } from './chatView';
 import { parseWhen, WhenParseError } from './parser';
 import { registerChatParticipant } from './participant';
 import { Scheduler } from './scheduler';
@@ -48,11 +47,7 @@ export function activate(context: vscode.ExtensionContext): void {
     // "Дополнить": @bot participant in the native chat panel.
     registerChatParticipant(context, scheduler);
 
-    // "Заменить": own chat UI + scheduler management in the sidebar.
-    const chatProvider = new ChatViewProvider(context, scheduler);
     context.subscriptions.push(
-        vscode.window.registerWebviewViewProvider(ChatViewProvider.viewId, chatProvider),
-
         vscode.commands.registerCommand('chatbot.scheduleMessage', async () => {
             const message = await vscode.window.showInputBox({
                 title: 'Message to deliver',
