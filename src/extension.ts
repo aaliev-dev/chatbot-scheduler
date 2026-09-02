@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { parseWhen, WhenParseError } from './parser';
 import { registerChatParticipant } from './participant';
 import { Scheduler } from './scheduler';
+import { findSessionBySnapshot } from './sessionFinder';
 import { Delivery, Schedule } from './types';
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -9,32 +10,60 @@ export function activate(context: vscode.ExtensionContext): void {
 
     // ---------------------------------------------------------------------------
     // Delivery: what actually happens when a scheduled message fires.
-    // 'chat' opens the native chat panel and submits the message as a query —
-    // so "check TODOs in 2h" lands right where you'd type it.
+    //
+    // 1. Snapshot match (best): find the stored chat session whose history
+    //    contains the conversation snapshot captured at /schedule time, open
+    //    THAT chat, and submit the message into it.
+    // 2. Re-seed (fallback): the chat was deleted or storage changed — open a
+    //    new chat seeded with the captured conversation via previousRequests,
+    //    so the message lands in a continuation of the same dialogue.
+    // 3. Plain: schedules created outside a chat (Command Palette) just go to
+    //    the chat widget that last had focus.
     // ---------------------------------------------------------------------------
-    const openInChat = (query: string): void => {
-        void vscode.commands
-            .executeCommand('workbench.action.chat.open', { query })
-            .then(undefined, (err: unknown) => {
-                void vscode.window.showWarningMessage(
-                    `ChatBot: could not open the chat panel (${String(err)}). Message was: "${query}"`
-                );
-            });
-    };
+    const submitQuery = (query: string, previousRequests?: { request: string; response: string }[]): Thenable<unknown> =>
+        vscode.commands.executeCommand('workbench.action.chat.open', {
+            query,
+            ...(previousRequests?.length ? { previousRequests: previousRequests.slice(-25) } : {}),
+        });
 
-    const deliver = (s: Schedule): void => {
-        if (s.delivery === 'chat') {
-            openInChat(s.message);
-        } else {
+    const deliver = async (s: Schedule): Promise<void> => {
+        if (s.delivery === 'notification') {
             void vscode.window
                 .showInformationMessage(`⏰ ${s.message}`, 'Open Chat')
                 .then((choice) => {
-                    if (choice === 'Open Chat') { openInChat(s.message); }
+                    if (choice === 'Open Chat') { void submitQuery(s.message); }
                 });
+            return;
+        }
+
+        try {
+            if (s.history?.length) {
+                const found = await findSessionBySnapshot(context.storageUri, s.history);
+                if (found) {
+                    // Same chat found → open it and submit the message there.
+                    await vscode.commands.executeCommand('vscode.open', found.resource);
+                    await submitQuery(s.message);
+                    return;
+                }
+                // Chat not found → continue the conversation in a fresh chat.
+                await vscode.commands.executeCommand('workbench.action.chat.newChat');
+                await submitQuery(s.message, s.history);
+                return;
+            }
+            await submitQuery(s.message);
+        } catch (err) {
+            // Last resort: plain submit to the focused chat.
+            try {
+                await submitQuery(s.message);
+            } catch {
+                void vscode.window.showWarningMessage(
+                    `ChatBot: could not deliver the scheduled message (${String(err)}). Message: "${s.message}"`
+                );
+            }
         }
     };
 
-    scheduler.onFire(deliver);
+    scheduler.onFire((s) => { void deliver(s); });
     context.subscriptions.push(scheduler);
 
     // Background windows throttle timers → catch up when focus returns.
@@ -48,6 +77,14 @@ export function activate(context: vscode.ExtensionContext): void {
     registerChatParticipant(context, scheduler);
 
     context.subscriptions.push(
+        // Clock button in the chat input status area: prefills the schedule command.
+        vscode.commands.registerCommand('chatbot.insertSchedule', () => {
+            void vscode.commands.executeCommand('workbench.action.chat.open', {
+                query: '@bot /schedule in ',
+                isPartialQuery: true,
+            });
+        }),
+
         vscode.commands.registerCommand('chatbot.scheduleMessage', async () => {
             const message = await vscode.window.showInputBox({
                 title: 'Message to deliver',

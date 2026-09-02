@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { pickDefaultCopilotModel } from './copilot';
 import { parseWhen, splitWhenAndMessage, WhenParseError } from './parser';
 import { Scheduler } from './scheduler';
-import { Schedule } from './types';
+import { Schedule, SnapshotTurn } from './types';
 
 const SYSTEM_PROMPT =
     'You are ChatBot — a concise, friendly assistant living in a VS Code extension. ' +
@@ -17,7 +17,7 @@ export function registerChatParticipant(context: vscode.ExtensionContext, schedu
     const handler: vscode.ChatRequestHandler = async (request, chatContext, stream, token) => {
         try {
             if (request.command === 'schedule') {
-                handleScheduleCommand(request, scheduler, stream);
+                handleScheduleCommand(request, chatContext, scheduler, stream);
                 return {};
             }
             if (request.command === 'list') {
@@ -38,7 +38,12 @@ export function registerChatParticipant(context: vscode.ExtensionContext, schedu
 
 // --- /schedule --------------------------------------------------------------
 
-function handleScheduleCommand(request: vscode.ChatRequest, scheduler: Scheduler, stream: vscode.ChatResponseStream): void {
+function handleScheduleCommand(
+    request: vscode.ChatRequest,
+    chatContext: vscode.ChatContext,
+    scheduler: Scheduler,
+    stream: vscode.ChatResponseStream
+): void {
     const prompt = request.prompt.trim();
     if (!prompt) {
         stream.markdown(
@@ -54,15 +59,46 @@ function handleScheduleCommand(request: vscode.ChatRequest, scheduler: Scheduler
         const { when, message } = splitWhenAndMessage(prompt);
         if (!message) { throw new WhenParseError('The message part is empty.'); }
         const parsed = parseWhen(when);
-        const s = scheduler.add(message, 'chat', parsed.at, parsed.repeat);
+        const snapshot = buildSnapshot(chatContext.history);
+        const s = scheduler.add(message, 'chat', parsed.at, parsed.repeat, snapshot);
         stream.markdown(
             `⏰ Scheduled for **${fmtDate(s.fireAt)}**${repeatSuffix(s)}.\n\n` +
             `Message: \`${s.message.replace(/`/g, "'")}\`\n\n` +
-            'It will be submitted to the chat panel automatically when the time comes.'
+            (snapshot
+                ? 'It will be delivered into **this conversation**: the extension finds the chat by its history snapshot and continues right where you left off. '
+                : 'It will be submitted to the chat panel automatically when the time comes. ')
         );
     } catch (err) {
         stream.markdown(`⚠️ ${errorMessage(err)}`);
     }
+}
+
+/**
+ * Conversation snapshot at schedule time. Later, on delivery, the extension
+ * searches stored chat sessions for this text to find the SAME chat again
+ * (see sessionFinder). Captured from chatContext.history — everything the
+ * user and agents said in this chat before the /schedule request.
+ */
+function buildSnapshot(history: readonly (vscode.ChatRequestTurn | vscode.ChatResponseTurn)[]): SnapshotTurn[] | undefined {
+    const turns: SnapshotTurn[] = [];
+    let pending: string | undefined;
+    for (const turn of history) {
+        if (turn instanceof vscode.ChatRequestTurn) {
+            pending = turn.prompt;
+        } else if (pending !== undefined) {
+            turns.push({ request: pending, response: responseText(turn) });
+            pending = undefined;
+        }
+    }
+    if (!turns.length) { return undefined; }
+    return turns.slice(-20);
+}
+
+function responseText(turn: vscode.ChatResponseTurn): string {
+    return turn.response
+        .map((part) => (part instanceof vscode.ChatResponseMarkdownPart ? part.value.value : ''))
+        .join('')
+        .trim();
 }
 
 // --- /list -------------------------------------------------------------------

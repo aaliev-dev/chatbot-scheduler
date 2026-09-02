@@ -43,8 +43,28 @@
       {
         "command": "chatbot.listSchedules",
         "title": "ChatBot: Show Scheduled Messages"
+      },
+      {
+        "command": "chatbot.insertSchedule",
+        "title": "Insert Schedule Command",
+        "icon": "$(clock)"
       }
-    ]
+    ],
+    "menus": {
+      "chat/input/status": [
+        {
+          "command": "chatbot.insertSchedule",
+          "when": "chatIsEnabled",
+          "group": "navigation"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "chatbot.insertSchedule",
+          "when": "false"
+        }
+      ]
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",

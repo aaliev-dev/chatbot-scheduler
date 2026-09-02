@@ -12,6 +12,16 @@ export type RepeatRule =
     | { kind: 'interval'; ms: number }
     | { kind: 'daily'; hour: number; minute: number };
 
+/**
+ * One turn of a conversation snapshot — the shape of `previousRequests`
+ * accepted by the built-in `workbench.action.chat.open` command
+ * (IChatViewOpenRequestEntry in VS Code core).
+ */
+export interface SnapshotTurn {
+    request: string;
+    response: string;
+}
+
 export interface Schedule {
     id: string;
     /** Message text. For 'chat' delivery this is submitted as a chat query. */
@@ -21,4 +31,10 @@ export interface Schedule {
     fireAt: number;
     repeat: RepeatRule;
     created: number;
+    /**
+     * Conversation snapshot captured from the chat where /schedule was
+     * invoked. On delivery the chat is re-seeded with this history, so the
+     * message lands in a continuation of the SAME conversation.
+     */
+    history?: SnapshotTurn[];
 }

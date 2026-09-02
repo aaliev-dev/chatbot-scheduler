@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import * as vscode from 'vscode';
-import { Delivery, RepeatRule, Schedule } from './types';
+import { Delivery, RepeatRule, Schedule, SnapshotTurn } from './types';
 
 const STORAGE_KEY = 'chatbot.schedules';
 
@@ -47,7 +47,13 @@ export class Scheduler implements vscode.Disposable {
         return this.schedules;
     }
 
-    add(message: string, delivery: Delivery, fireAt: number, repeat: RepeatRule = { kind: 'none' }): Schedule {
+    add(
+        message: string,
+        delivery: Delivery,
+        fireAt: number,
+        repeat: RepeatRule = { kind: 'none' },
+        history?: SnapshotTurn[]
+    ): Schedule {
         const schedule: Schedule = {
             id: randomUUID(),
             message,
@@ -55,6 +61,7 @@ export class Scheduler implements vscode.Disposable {
             fireAt,
             repeat,
             created: Date.now(),
+            history,
         };
         this.schedules.push(schedule);
         this.arm(schedule);
