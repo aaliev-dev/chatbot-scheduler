@@ -77,12 +77,37 @@ export function activate(context: vscode.ExtensionContext): void {
     registerChatParticipant(context, scheduler);
 
     context.subscriptions.push(
-        // Clock button in the chat input status area: prefills the schedule command.
-        vscode.commands.registerCommand('chatbot.insertSchedule', () => {
-            void vscode.commands.executeCommand('workbench.action.chat.open', {
-                query: '@bot /schedule in ',
-                isPartialQuery: true,
+        // Clock button in the chat input status area:
+        // pick a delay → if the input has a draft, compose & submit the schedule
+        // command with it; if the input is empty, prefill the command template.
+        vscode.commands.registerCommand('chatbot.insertSchedule', async () => {
+            const DELAYS: (vscode.QuickPickItem & { when: string })[] = [
+                { label: '$(clock) 15 минут', when: '15m' },
+                { label: '$(clock) 30 минут', when: '30m' },
+                { label: '$(clock) 1 час', when: '1h' },
+                { label: '$(clock) 2 часа', when: '2h' },
+                { label: '$(clock) 3 часа', when: '3h' },
+            ];
+            const picked = await vscode.window.showQuickPick(DELAYS, {
+                placeHolder: 'Когда отправить сообщение?',
+                title: 'ChatBot: отложенная отправка',
             });
+            if (!picked) { return; }
+
+            const prefix = `@bot /schedule in ${picked.when}`;
+            const draft = await readChatDraft();
+            if (draft !== undefined && draft.trim()) {
+                // Draft exists → schedule it right away (submit immediately).
+                await vscode.commands.executeCommand('workbench.action.chat.open', {
+                    query: `${prefix} :: ${draft.trim()}`,
+                });
+            } else {
+                // Empty or unreadable input → just insert the template, no submit.
+                await vscode.commands.executeCommand('workbench.action.chat.open', {
+                    query: `${prefix} :: `,
+                    isPartialQuery: true,
+                });
+            }
         }),
 
         vscode.commands.registerCommand('chatbot.scheduleMessage', async () => {
@@ -157,6 +182,68 @@ export function deactivate(): void {
 }
 
 // --- helpers ------------------------------------------------------------------
+
+/**
+ * Reads the current text in the native chat input.
+ *
+ * Theory: there is no public API to read the chat input draft, but the input
+ * is a Monaco editor, and generic editor commands route to the focused
+ * editor. So we borrow the clipboard for a moment:
+ *
+ *   save clipboard → drop a sentinel → focusInput → selectAll → copy → read
+ *
+ * If the clipboard now differs from the sentinel, it holds the draft; if it is
+ * still the sentinel, the input was empty (copy had nothing to overwrite
+ * with). The saved clipboard content is restored in `finally`.
+ *
+ * Caveat, honestly: `clipboard.readText/writeText` are text-only. If the user
+ * had a non-text payload (e.g. a screenshot) in the clipboard, it cannot be
+ * saved or restored and is lost by this action.
+ */
+const DRAFT_PROBE = '\u2063chatbot:draft-probe';
+
+async function readChatDraft(): Promise<string | undefined> {
+    let saved = '';
+    try {
+        saved = await vscode.env.clipboard.readText();
+    } catch {
+        saved = '';
+    }
+    try {
+        await vscode.env.clipboard.writeText(DRAFT_PROBE);
+        await clipboardBecomes((v) => v === DRAFT_PROBE, 300);
+
+        await vscode.commands.executeCommand('workbench.action.chat.focusInput');
+        await sleep(60); // let the input actually take focus
+        await vscode.commands.executeCommand('editor.action.selectAll');
+        await sleep(30);
+        await vscode.commands.executeCommand('editor.action.clipboardCopyAction');
+
+        // Empty input leaves the sentinel in place — 400ms is enough to see that.
+        const copied = await clipboardBecomes((v) => v !== DRAFT_PROBE && v !== '', 400);
+        return copied === DRAFT_PROBE || copied === '' ? '' : copied;
+    } catch {
+        return undefined;
+    } finally {
+        try { await vscode.env.clipboard.writeText(saved); } catch { /* best effort */ }
+    }
+}
+
+/** Polls the clipboard until `predicate` holds or timeout — Electron writes
+ *  are occasionally asynchronous, so a bare read can race the write. */
+async function clipboardBecomes(predicate: (v: string) => boolean, timeoutMs: number): Promise<string> {
+    const deadline = Date.now() + timeoutMs;
+    let value = await vscode.env.clipboard.readText();
+    while (!predicate(value) && Date.now() < deadline) {
+        await sleep(40);
+        value = await vscode.env.clipboard.readText();
+    }
+    return value;
+}
+
+function sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 async function pickDelivery(): Promise<Delivery | undefined> {
     const pick = await vscode.window.showQuickPick<vscode.QuickPickItem & { value: Delivery }>([

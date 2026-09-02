@@ -46,7 +46,7 @@
       },
       {
         "command": "chatbot.insertSchedule",
-        "title": "Insert Schedule Command",
+        "title": "Отложить сообщение",
         "icon": "$(clock)"
       }
     ],
