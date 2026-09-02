@@ -1,0 +1,77 @@
+{
+  "name": "chatbot-extension",
+  "displayName": "ChatBot",
+  "description": "Custom chat agent for VS Code with Telegram-style delayed messages",
+  "version": "0.1.0",
+  "publisher": "aliwodan",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "Chat",
+    "Other"
+  ],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "chatParticipants": [
+      {
+        "id": "chatbot.scheduler",
+        "name": "bot",
+        "displayName": "ChatBot",
+        "fullName": "ChatBot",
+        "description": "Custom agent with delayed (Telegram-style) message scheduling",
+        "isSticky": true,
+        "commands": [
+          {
+            "name": "schedule",
+            "description": "Schedule a delayed message: /schedule in 2h :: your message"
+          },
+          {
+            "name": "list",
+            "description": "List scheduled messages"
+          }
+        ]
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "chatbot",
+          "title": "ChatBot",
+          "icon": "media/sideBar.svg"
+        }
+      ]
+    },
+    "views": {
+      "chatbot": [
+        {
+          "type": "webview",
+          "id": "chatbot.chatView",
+          "name": "Chat & Schedule"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "chatbot.scheduleMessage",
+        "title": "ChatBot: Schedule Message"
+      },
+      {
+        "command": "chatbot.listSchedules",
+        "title": "ChatBot: Show Scheduled Messages"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/vscode": "^1.95.0",
+    "typescript": "^5.4.0"
+  }
+}
