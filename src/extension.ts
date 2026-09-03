@@ -6,10 +6,19 @@ import { findSessionBySnapshot } from './sessionFinder';
 import { Delivery, Schedule } from './types';
 
 export function activate(context: vscode.ExtensionContext): void {
+    // Instrumentation goes to the exthost console log — survives even if the
+    // extension dies mid-way, unlike the Output channel. Remove once stable.
+    const trace = (msg: string): void => {
+        console.log(`[chatbot] ${msg}`);
+        log.appendLine(`[${new Date().toLocaleTimeString()}] ${msg}`);
+    };
+
     // Lightweight diagnostics channel: visible in Output → "ChatBot", so
     // "nothing happens" reports can be traced to a concrete step next time.
     const log = vscode.window.createOutputChannel('ChatBot');
     context.subscriptions.push(log);
+
+    trace(`activate start (v${context.extension.packageJSON.version ?? '?'})`);
 
     const scheduler = new Scheduler(context.globalState);
 
@@ -80,13 +89,15 @@ export function activate(context: vscode.ExtensionContext): void {
 
     // "Дополнить": @bot participant in the native chat panel.
     registerChatParticipant(context, scheduler);
+    trace('participant registered');
 
     context.subscriptions.push(
         // Clock button in the chat input status area:
         // pick a delay → if the input has a draft, compose & submit the schedule
         // command with it; if the input is empty, prefill the command template.
-        vscode.commands.registerCommand('chatbot.insertSchedule', async () => {
-            log.appendLine(`[${new Date().toLocaleTimeString()}] insertSchedule invoked`);
+        vscode.commands.registerCommand('chatbot.insertSchedule', async (...args: unknown[]) => {
+            trace(`insertSchedule invoked (args: ${JSON.stringify(args)?.slice(0, 200) ?? '[]'})`);
+            try {
             const DELAYS: (vscode.QuickPickItem & { when: string })[] = [
                 { label: '$(clock) 15 минут', when: '15m' },
                 { label: '$(clock) 30 минут', when: '30m' },
@@ -99,13 +110,13 @@ export function activate(context: vscode.ExtensionContext): void {
                 title: 'ChatBot: отложенная отправка',
             });
             if (!picked) {
-                log.appendLine('  picker dismissed without a choice');
+                trace('  picker dismissed without a choice');
                 return;
             }
 
             const prefix = `@bot /schedule in ${picked.when}`;
             const draft = await readChatDraft();
-            log.appendLine(
+            trace(
                 `  delay=${picked.when} draft=${draft === undefined ? 'unreadable' : JSON.stringify(draft.slice(0, 80))}`
             );
             if (draft !== undefined && draft.trim()) {
@@ -119,6 +130,11 @@ export function activate(context: vscode.ExtensionContext): void {
                     query: `${prefix} :: `,
                     isPartialQuery: true,
                 });
+            }
+            trace('  insertSchedule finished OK');
+            } catch (err) {
+                trace(`  insertSchedule FAILED: ${String(err)}`);
+                throw err;
             }
         }),
 
@@ -187,6 +203,8 @@ export function activate(context: vscode.ExtensionContext): void {
             qp.show();
         })
     );
+
+    trace('activate complete — all commands registered');
 }
 
 export function deactivate(): void {
