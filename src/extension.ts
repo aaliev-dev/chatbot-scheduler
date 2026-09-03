@@ -55,6 +55,32 @@ export function activate(context: vscode.ExtensionContext): void {
             ...(previousRequests?.length ? { previousRequests: previousRequests.slice(-25) } : {}),
         });
 
+    /**
+     * Cross-window race guard: two VS Code windows share globalState and both
+     * keep in-memory copies of the schedule — both timers fire at the same
+     * second. The first window writes its claim; the second one sees a claim
+     * from the other window and backs off.
+     */
+    const claimDelivery = async (id: string): Promise<boolean> => {
+        const key = `chatbot.delivered.${id}`;
+        if (context.globalState.get<string>(key)) { return false; }
+        const mine = `win:${Math.random()}`;
+        await context.globalState.update(key, mine);
+        await new Promise((r) => setTimeout(r, 120));
+        return context.globalState.get<string>(key) === mine;
+    };
+
+    /** True when an editor tab for this chat session is visible AND active right now. */
+    const isSessionTabActive = (resource: vscode.Uri): boolean => {
+        try {
+            const active = vscode.window.tabGroups.activeTabGroup?.activeTab;
+            const uri = (active?.input as { uri?: vscode.Uri } | undefined)?.uri;
+            return uri?.toString() === resource.toString();
+        } catch {
+            return false;
+        }
+    };
+
     const deliver = async (s: Schedule): Promise<void> => {
         if (s.delivery === 'notification') {
             void vscode.window
@@ -66,19 +92,31 @@ export function activate(context: vscode.ExtensionContext): void {
         }
 
         try {
-            // Quiet delivery: submit into the chat the user is looking at.
-            // No probes (they spammed the conversation), no session opens, no
-            // focus stealing, draft preserved. The snapshot still does useful
-            // work: if the snapshot's chat no longer exists on disk (deleted),
-            // continue the dialogue in a fresh chat seeded with that history
-            // so the message never lands in a contextless void.
+            // Cross-window guard first: only one VS Code window delivers.
+            if (s.delivery === 'chat' && !(await claimDelivery(s.id))) { return; }
+
+            // Core semantics (user requirement): find the TARGET chat by its
+            // conversation snapshot and deliver THERE, always — even if the
+            // user has since moved to another chat.
             if (s.history?.length) {
                 const found = await findSessionBySnapshot(context.storageUri, s.history);
                 if (!found) {
+                    // Target chat deleted → continue the dialogue in a fresh
+                    // chat seeded with the captured history.
                     await vscode.commands.executeCommand('workbench.action.chat.newChat');
                     await submitQuery(s.message, s.history);
                     return;
                 }
+                if (isSessionTabActive(found.resource)) {
+                    // Target chat is open and in front right now → zero noise.
+                    await submitQuery(s.message);
+                    return;
+                }
+                // Route to the target chat: reveal its existing editor tab
+                // (revealIfOpened prevents duplicates) and submit there.
+                await vscode.commands.executeCommand('vscode.open', found.resource, { revealIfOpened: true });
+                await submitQuery(s.message);
+                return;
             }
             await submitQuery(s.message);
         } catch (err) {

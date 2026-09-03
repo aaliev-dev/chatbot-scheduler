@@ -45,15 +45,18 @@ Manual form, in chat:
 
 ## Where a scheduled message lands
 
-Delivery is quiet by design — no tab opens, no focus stealing, and any draft
-you were typing stays intact:
+The core promise: the message goes to **the chat it was scheduled from** —
+even if you have moved to another chat by then.
 
-1. **The focused chat.** The message is submitted into the chat that currently
-   has focus. In the normal flow (schedule from a chat, stay in it) that is
-   the conversation you scheduled from.
-2. **Conversation continuation.** If the original conversation no longer
-   exists on disk (chat deleted), a new chat is opened seeded with the
-   captured history, and the message is submitted at the end.
+- On scheduling, the extension takes a conversation snapshot. On fire it finds
+  the stored chat session matching that snapshot and delivers there.
+- If that chat is already open and in front, delivery is silent — nothing
+  moves, and any draft you were typing stays intact.
+- Otherwise the target chat is revealed (its existing tab is reused, no
+  duplicates) and the message is submitted there — that is the point of the
+  feature.
+- If the original chat was deleted, a new chat is opened seeded with the
+  captured history, so the dialogue continues instead of landing in a void.
 
 ## Limitations (honest ones)
 
