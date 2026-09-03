@@ -31,9 +31,17 @@ export function registerChatParticipant(context: vscode.ExtensionContext, schedu
         return {};
     };
 
-    const participant = vscode.chat.createChatParticipant('chatbot.scheduler', handler);
-    participant.iconPath = vscode.Uri.joinPath(context.extensionUri, 'media', 'bot.svg');
-    context.subscriptions.push(participant);
+    // Hot-swap guard: when the extension is reinstalled with --force into a
+    // live window, a second instance may activate while the first one still
+    // holds the participant. Losing the registration race must not kill the
+    // activation — the surviving instance keeps serving @bot either way.
+    try {
+        const participant = vscode.chat.createChatParticipant('chatbot.scheduler', handler);
+        participant.iconPath = vscode.Uri.joinPath(context.extensionUri, 'media', 'bot.svg');
+        context.subscriptions.push(participant);
+    } catch (err) {
+        console.log(`[chatbot] createChatParticipant conflict: ${String(err)}`);
+    }
 }
 
 // --- /schedule --------------------------------------------------------------

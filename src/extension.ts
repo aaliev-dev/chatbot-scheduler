@@ -91,11 +91,23 @@ export function activate(context: vscode.ExtensionContext): void {
     registerChatParticipant(context, scheduler);
     trace('participant registered');
 
-    context.subscriptions.push(
-        // Clock button in the chat input status area:
-        // pick a delay → if the input has a draft, compose & submit the schedule
-        // command with it; if the input is empty, prefill the command template.
-        vscode.commands.registerCommand('chatbot.insertSchedule', async (...args: unknown[]) => {
+    // Hot-swap guard: reinstalling the extension with --force into a live
+    // window can activate a second instance while the first still holds the
+    // command registrations ("command 'x' already exists"). Losing the
+    // registration race must not kill activation — the surviving instance
+    // keeps serving the command either way.
+    const register = (command: string, handler: (...args: never[]) => unknown): void => {
+        try {
+            context.subscriptions.push(vscode.commands.registerCommand(command, handler));
+        } catch (err) {
+            trace(`registerCommand(${command}) conflict (hot-swap): ${String(err)}`);
+        }
+    };
+
+    // Clock button in the chat input status area:
+    // pick a delay → if the input has a draft, compose & submit the schedule
+    // command with it; if the input is empty, prefill the command template.
+    register('chatbot.insertSchedule', async (...args: unknown[]) => {
             trace(`insertSchedule invoked (args: ${JSON.stringify(args)?.slice(0, 200) ?? '[]'})`);
             try {
             const DELAYS: (vscode.QuickPickItem & { when: string })[] = [
@@ -136,9 +148,9 @@ export function activate(context: vscode.ExtensionContext): void {
                 trace(`  insertSchedule FAILED: ${String(err)}`);
                 throw err;
             }
-        }),
+        });
 
-        vscode.commands.registerCommand('chatbot.scheduleMessage', async () => {
+    register('chatbot.scheduleMessage', async () => {
             const message = await vscode.window.showInputBox({
                 title: 'Message to deliver',
                 prompt: 'For chat delivery this is submitted as a chat query — you can use @participants, #files, etc.',
@@ -167,9 +179,9 @@ export function activate(context: vscode.ExtensionContext): void {
                     throw err;
                 }
             }
-        }),
+        });
 
-        vscode.commands.registerCommand('chatbot.listSchedules', () => {
+    register('chatbot.listSchedules', () => {
             const qp = vscode.window.createQuickPick<vscode.QuickPickItem & { id: string }>();
             const toItems = (): (vscode.QuickPickItem & { id: string })[] =>
                 [...scheduler.list()]
@@ -201,8 +213,7 @@ export function activate(context: vscode.ExtensionContext): void {
                 }
             });
             qp.show();
-        })
-    );
+        });
 
     trace('activate complete — all commands registered');
 }
