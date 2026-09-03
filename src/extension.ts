@@ -227,7 +227,22 @@ export function activate(context: vscode.ExtensionContext): void {
             }
         });
 
-    register('chatbot.listSchedules', () => {
+    // Target chat label for a schedule: derived from its conversation
+    // snapshot — the first user prompt of the founding session identifies the
+    // chat naturally ("the chat about the job"). Schedules created outside a
+    // chat (@bot) have no snapshot and go to the focused chat.
+    const targetLabel = async (s: Schedule): Promise<string> => {
+        if (!s.history?.length) { return '→ focused chat'; }
+        const found = await findSessionBySnapshot(context.storageUri, s.history);
+        const firstPrompt = s.history[0].request.replace(/\s+/g, ' ').trim();
+        if (!found) { return `→ (original chat deleted) «${trunc(firstPrompt, 24)}»`; }
+        return `→ «${trunc(firstPrompt, 24)}»`;
+    };
+
+    const trunc = (text: string, max: number): string =>
+        text.length > max ? `${text.slice(0, max - 1)}…` : text;
+
+    const showScheduleManager = async (): Promise<void> => {
         interface SchedulePickItem extends vscode.QuickPickItem {
             id: string;
         }
@@ -235,49 +250,62 @@ export function activate(context: vscode.ExtensionContext): void {
             iconPath: new vscode.ThemeIcon('trash'),
             tooltip: 'Delete this schedule',
         };
-        const qp = vscode.window.createQuickPick<SchedulePickItem>();
-        const toItems = (): SchedulePickItem[] =>
-            [...scheduler.list()]
-                .sort((a, b) => a.fireAt - b.fireAt)
-                .map((s, i) => ({
-                    id: s.id,
-                    label: `$(clock) ${fmtDate(s.fireAt)}${repeatSuffix(s)}`,
-                    description: s.delivery,
-                    detail: `#${i + 1} · ${s.message}`,
-                    buttons: [deleteButton],
-                }));
-
-        const items = toItems();
-        if (!items.length) {
+        const sorted = [...scheduler.list()].sort((a, b) => a.fireAt - b.fireAt);
+        if (!sorted.length) {
             void vscode.window.showInformationMessage(
                 'Chat Bot Scheduler: no scheduled messages yet. Create one with the ⏱ button or ⌘⌥S.'
             );
             return;
         }
+        const toItems = async (): Promise<SchedulePickItem[]> => {
+            const sorted_ = [...scheduler.list()].sort((a, b) => a.fireAt - b.fireAt);
+            const labels = await Promise.all(sorted_.map(targetLabel));
+            return sorted_.map((s, i) => ({
+                id: s.id,
+                label: `$(clock) ${fmtDate(s.fireAt)}${repeatSuffix(s)}`,
+                description: labels[i],
+                detail: `#${i + 1} · ${s.message}`,
+                buttons: [deleteButton],
+            }));
+        };
 
-        const refreshOrHide = (): void => {
-            const rest = toItems();
-            if (rest.length) {
-                qp.items = rest;
+        const qp = vscode.window.createQuickPick<SchedulePickItem>();
+        qp.items = await toItems();
+
+        const refreshOrHide = async (): Promise<void> => {
+            if (scheduler.list().length) {
+                qp.items = await toItems();
             } else {
                 qp.hide();
                 void vscode.window.showInformationMessage('Chat Bot Scheduler: all schedules deleted.');
             }
         };
-        const remove = (item: SchedulePickItem): void => {
+        const remove = async (item: SchedulePickItem): Promise<void> => {
             scheduler.remove(item.id);
-            refreshOrHide();
+            await refreshOrHide();
         };
 
         qp.placeholder = 'Enter or 🗑 deletes the selected schedule';
-        qp.items = items;
-        qp.onDidTriggerItemButton((e) => remove(e.item as SchedulePickItem));
-        qp.onDidAccept(() => {
+        qp.onDidTriggerItemButton((e) => { void remove(e.item as SchedulePickItem); });
+        qp.onDidAccept(async () => {
             const sel = qp.selectedItems[0];
-            if (sel) { remove(sel); }
+            if (sel) { await remove(sel); }
         });
         qp.show();
-    });
+    };
+
+    // One command, two faces: the title-bar icon switches to a "pending" bell
+    // (via the chatbotHasSchedules context key) whenever schedules exist.
+    // This is how the calendar stays grey while idle and highlighted when
+    // there is anything pending.
+    register('chatbot.listSchedules', () => { void showScheduleManager(); });
+    register('chatbot.listSchedulesActive', () => { void showScheduleManager(); });
+
+    const updateHasSchedules = (): void => {
+        void vscode.commands.executeCommand('setContext', 'chatbotHasSchedules', scheduler.list().length > 0);
+    };
+    updateHasSchedules();
+    context.subscriptions.push(scheduler.onDidChange(updateHasSchedules));
 
     // Inline buttons in the @bot confirmation message (command links).
     // With an id arg — act on that schedule; without — fall back to the manager.

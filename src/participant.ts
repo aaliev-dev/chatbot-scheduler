@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { pickDefaultCopilotModel } from './copilot';
 import { parseWhen, splitWhenAndMessage, WhenParseError } from './parser';
+import { findSessionBySnapshot } from './sessionFinder';
 import { Scheduler } from './scheduler';
 import { Schedule, SnapshotTurn } from './types';
 
@@ -21,7 +22,7 @@ export function registerChatParticipant(context: vscode.ExtensionContext, schedu
                 return {};
             }
             if (request.command === 'list') {
-                renderScheduleList(scheduler, stream);
+                await renderScheduleList(context, scheduler, stream);
                 return {};
             }
             if (request.command === 'cancel') {
@@ -113,17 +114,27 @@ function responseText(turn: vscode.ChatResponseTurn): string {
 
 // --- /list -------------------------------------------------------------------
 
-function renderScheduleList(scheduler: Scheduler, stream: vscode.ChatResponseStream): void {
+async function renderScheduleList(context: vscode.ExtensionContext, scheduler: Scheduler, stream: vscode.ChatResponseStream): Promise<void> {
     const all = [...scheduler.list()].sort((a, b) => a.fireAt - b.fireAt);
     if (!all.length) {
-        stream.markdown('No scheduled messages yet. Add one with `/schedule in 2h :: hello`. Or use **Chat Bot Scheduler: Schedule Message** from the Command Palette.');
+        stream.markdown('No scheduled messages yet. Add one with `/schedule in 2h :: hello`.');
         return;
     }
-    stream.markdown('| # | When | Message | Delivery |\n|---|---|---|---|\n');
+    const targets = await Promise.all(all.map((s) => targetChatLabel(context, s)));
+    stream.markdown('| # | When | Message | Will land in |\n|---|---|---|---|\n');
     all.forEach((s, i) => {
-        stream.markdown(`| ${i + 1} | ${fmtDate(s.fireAt)}${repeatSuffix(s)} | \`${escapeCell(s.message)}\` | ${s.delivery} |\n`);
+        stream.markdown(`| ${i + 1} | ${fmtDate(s.fireAt)}${repeatSuffix(s)} | \`${escapeCell(s.message)}\` | ${escapeCell(targets[i])} |\n`);
     });
     stream.markdown('\nCancel one with `/cancel <number>`, e.g. `/cancel 2`.');
+}
+
+/** Human label of the chat a schedule will land in, from its founding conversation. */
+async function targetChatLabel(context: vscode.ExtensionContext, s: Schedule): Promise<string> {
+    if (!s.history?.length) { return 'focused chat'; }
+    const firstPrompt = s.history[0].request.replace(/\s+/g, ' ').trim();
+    const short = firstPrompt.length > 24 ? `${firstPrompt.slice(0, 23)}…` : firstPrompt;
+    const found = await findSessionBySnapshot(context.storageUri, s.history);
+    return found ? `chat «${short}»` : `(original chat deleted) «${short}»`;
 }
 
 // --- /cancel ------------------------------------------------------------------
