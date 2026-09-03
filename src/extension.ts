@@ -92,32 +92,12 @@ export function activate(context: vscode.ExtensionContext): void {
         }
 
         try {
-            // Cross-window guard first: only one VS Code window delivers.
+            // Cross-window guard: only one VS Code window delivers.
             if (s.delivery === 'chat' && !(await claimDelivery(s.id))) { return; }
 
-            // Core semantics (user requirement): find the TARGET chat by its
-            // conversation snapshot and deliver THERE, always — even if the
-            // user has since moved to another chat.
-            if (s.history?.length) {
-                const found = await findSessionBySnapshot(context.storageUri, s.history);
-                if (!found) {
-                    // Target chat deleted → continue the dialogue in a fresh
-                    // chat seeded with the captured history.
-                    await vscode.commands.executeCommand('workbench.action.chat.newChat');
-                    await submitQuery(s.message, s.history);
-                    return;
-                }
-                if (isSessionTabActive(found.resource)) {
-                    // Target chat is open and in front right now → zero noise.
-                    await submitQuery(s.message);
-                    return;
-                }
-                // Route to the target chat: reveal its existing editor tab
-                // (revealIfOpened prevents duplicates) and submit there.
-                await vscode.commands.executeCommand('vscode.open', found.resource, { revealIfOpened: true });
-                await submitQuery(s.message);
-                return;
-            }
+            // RESTORED quiet delivery (the state the user called "нормально"):
+            // a plain visible submit into the currently focused chat — no
+            // vscode.open sessions, no tab reveals, ZERO focus movement.
             await submitQuery(s.message);
         } catch (err) {
             try {
