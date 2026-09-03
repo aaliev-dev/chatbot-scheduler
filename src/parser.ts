@@ -15,7 +15,8 @@ export class WhenParseError extends Error {
 
 const USAGE =
     'Unable to parse the time. Supported formats:\n' +
-    '• "in 2h" / "in 1h 30m" / "in 2d" — delayed (Telegram-style)\n' +
+    '• "15m" / "2h" / "1h 30m" / "2d" — delayed (Telegram-style)\n' +
+    '• "in 2h" / "in 1h 30m" — same with the explicit keyword\n' +
     '• "at 17:30" / "at 5:30pm" / "at 17:30 tomorrow"\n' +
     '• "at 2026-09-05 10:00"\n' +
     '• "daily 09:30" — recurring every day\n' +
@@ -90,6 +91,10 @@ export function parseWhen(raw: string, now: Date = new Date()): ParsedWhen {
     const input = raw.trim().toLowerCase();
     const nowMs = now.getTime();
     if (!input) { throw new WhenParseError(USAGE); }
+
+    // 0) Bare duration without the "in" keyword: "15m", "1h 30m", "2d".
+    const bare = parseDuration(input);
+    if (bare > 0) { return { at: nowMs + bare, repeat: { kind: 'none' } }; }
 
     // 1) Delayed sending — the main use case ("send this in 2 hours").
     const rel = input.match(/^(?:in|after|через)\s+(.+)$/);
