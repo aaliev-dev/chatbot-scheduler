@@ -242,46 +242,86 @@ export function activate(context: vscode.ExtensionContext): void {
     const trunc = (text: string, max: number): string =>
         text.length > max ? `${text.slice(0, max - 1)}…` : text;
 
+    /** "Will be sent in 15m (16:59)" phrase, computed back from fire time. */
+    const relativeSchedulePhrase = (s: Schedule): string => {
+        if (s.repeat.kind === 'daily') {
+            return `daily at ${String(s.repeat.hour).padStart(2, '0')}:${String(s.repeat.minute).padStart(2, '0')} —`;
+        }
+        const diff = s.fireAt - Date.now();
+        if (diff <= 0) { return 'now'; }
+        const mins = Math.round(diff / 60000);
+        if (mins < 60) { return `in ${mins}m`; }
+        const hours = Math.round(diff / 3600000);
+        if (hours < 24) { return `in ${hours}h`; }
+        return `in ${Math.round(diff / 86400000)}d`;
+    };
+
     const showScheduleManager = async (): Promise<void> => {
         interface SchedulePickItem extends vscode.QuickPickItem {
-            id: string;
+            id?: string;
         }
         const deleteButton: vscode.QuickInputButton = {
             iconPath: new vscode.ThemeIcon('trash'),
             tooltip: 'Delete this schedule',
         };
-        const sorted = [...scheduler.list()].sort((a, b) => a.fireAt - b.fireAt);
-        if (!sorted.length) {
+        if (!scheduler.list().length) {
             void vscode.window.showInformationMessage(
                 'Chat Bot Scheduler: no scheduled messages yet. Create one with the ⏱ button or ⌘⌥S.'
             );
             return;
         }
-        const toItems = async (): Promise<SchedulePickItem[]> => {
-            const sorted_ = [...scheduler.list()].sort((a, b) => a.fireAt - b.fireAt);
-            const labels = await Promise.all(sorted_.map(targetLabel));
-            return sorted_.map((s, i) => ({
-                id: s.id,
-                label: `$(clock) ${fmtDate(s.fireAt)}${repeatSuffix(s)}`,
-                description: labels[i],
-                detail: `#${i + 1} · ${s.message}`,
-                buttons: [deleteButton],
-            }));
+
+        // Grouped exactly like @bot /list: chat-title sections, per-chat
+        // numbering, "Will be sent in 15m (16:59)" rows, trash per row.
+        const buildItems = async (): Promise<SchedulePickItem[]> => {
+            const all = [...scheduler.list()].sort((a, b) => a.fireAt - b.fireAt);
+            const labeled = await Promise.all(
+                all.map(async (s) => ({ s, label: await targetLabel(s) }))
+            );
+            const groups: { label: string; rows: { s: Schedule; label: string }[] }[] = [];
+            for (const e of labeled) {
+                let g = groups.find((x) => x.label === e.label);
+                if (!g) {
+                    g = { label: e.label, rows: [] };
+                    groups.push(g);
+                }
+                g.rows.push(e);
+            }
+
+            const items: SchedulePickItem[] = [];
+            for (const g of groups) {
+                items.push({
+                    label: g.label.replace('→ ', ''),
+                    kind: vscode.QuickPickItemKind.Separator,
+                });
+                g.rows
+                    .sort((a, b) => a.s.fireAt - b.s.fireAt)
+                    .forEach((r, i) => {
+                        const abs = new Date(r.s.fireAt);
+                        const at = `${String(abs.getHours()).padStart(2, '0')}:${String(abs.getMinutes()).padStart(2, '0')}`;
+                        items.push({
+                            id: r.s.id,
+                            label: `${i + 1}. Will be sent ${relativeSchedulePhrase(r.s)} (${at}) “${r.s.message.slice(0, 60)}”`,
+                            buttons: [deleteButton],
+                        });
+                    });
+            }
+            return items;
         };
 
         const qp = vscode.window.createQuickPick<SchedulePickItem>();
-        qp.items = await toItems();
+        qp.items = await buildItems();
 
         const refreshOrHide = async (): Promise<void> => {
             if (scheduler.list().length) {
-                qp.items = await toItems();
+                qp.items = await buildItems();
             } else {
                 qp.hide();
                 void vscode.window.showInformationMessage('Chat Bot Scheduler: all schedules deleted.');
             }
         };
         const remove = async (item: SchedulePickItem): Promise<void> => {
-            scheduler.remove(item.id);
+            if (item.id) { scheduler.remove(item.id); }
             await refreshOrHide();
         };
 

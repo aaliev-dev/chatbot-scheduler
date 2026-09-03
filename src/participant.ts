@@ -26,7 +26,7 @@ export function registerChatParticipant(context: vscode.ExtensionContext, schedu
                 return {};
             }
             if (request.command === 'cancel') {
-                handleCancelCommand(request, scheduler, stream);
+                await handleCancelCommand(context, request, scheduler, stream);
                 return {};
             }
             await handleChat(request, chatContext, stream, token);
@@ -114,18 +114,69 @@ function responseText(turn: vscode.ChatResponseTurn): string {
 
 // --- /list -------------------------------------------------------------------
 
-async function renderScheduleList(context: vscode.ExtensionContext, scheduler: Scheduler, stream: vscode.ChatResponseStream): Promise<void> {
+/** Grouped view of schedules: chat label → rows (sorted by fire time). */
+interface ScheduleRow {
+    schedule: Schedule;
+    /** In-group display number (1-based), matches /cancel. */
+    num: number;
+}
+
+interface ChatGroup {
+    label: string;
+    rows: ScheduleRow[];
+}
+
+async function buildGroups(context: vscode.ExtensionContext, scheduler: Scheduler): Promise<ChatGroup[]> {
     const all = [...scheduler.list()].sort((a, b) => a.fireAt - b.fireAt);
-    if (!all.length) {
+    const labeled = await Promise.all(
+        all.map(async (s) => ({ s, label: await targetChatLabel(context, s) }))
+    );
+    const groups: ChatGroup[] = [];
+    for (const e of labeled) {
+        let g = groups.find((x) => x.label === e.label);
+        if (!g) {
+            g = { label: e.label, rows: [] };
+            groups.push(g);
+        }
+        g.rows.push({ schedule: e.s, num: 0 });
+    }
+    for (const g of groups) {
+        g.rows.sort((a, b) => a.schedule.fireAt - b.schedule.fireAt);
+        g.rows.forEach((r, i) => { r.num = i + 1; });
+    }
+    return groups;
+}
+
+async function renderScheduleList(context: vscode.ExtensionContext, scheduler: Scheduler, stream: vscode.ChatResponseStream): Promise<void> {
+    const groups = await buildGroups(context, scheduler);
+    if (!groups.length) {
         stream.markdown('No scheduled messages yet. Add one with `/schedule in 2h :: hello`.');
         return;
     }
-    const targets = await Promise.all(all.map((s) => targetChatLabel(context, s)));
-    stream.markdown('| # | When | Message | Will land in |\n|---|---|---|---|\n');
-    all.forEach((s, i) => {
-        stream.markdown(`| ${i + 1} | ${fmtDate(s.fireAt)}${repeatSuffix(s)} | \`${escapeCell(s.message)}\` | ${escapeCell(targets[i])} |\n`);
-    });
-    stream.markdown('\nCancel one with `/cancel <number>`, e.g. `/cancel 2`.');
+    for (const g of groups) {
+        stream.markdown(`**${escapeCell(g.label)}**\n\n`);
+        for (const r of g.rows) {
+            stream.markdown(`${r.num}. ${relativePhrase(r.schedule)} “${escapeCell(r.schedule.message.slice(0, 60))}”\n`);
+        }
+        stream.markdown('\n');
+    }
+    stream.markdown('Cancel one with `/cancel <number>` (the numbers are per chat).');
+}
+
+/** "Will be sent in 15m (16:59)" style phrase, computed back from fire time. */
+function relativePhrase(s: Schedule): string {
+    if (s.repeat.kind === 'daily') {
+        return `daily at ${pad2(s.repeat.hour)}:${pad2(s.repeat.minute)} —`;
+    }
+    const abs = new Date(s.fireAt);
+    const at = `(${pad2(abs.getHours())}:${pad2(abs.getMinutes())})`;
+    const diff = s.fireAt - Date.now();
+    if (diff <= 0) { return 'Will be sent now ' + at; }
+    const mins = Math.round(diff / 60000);
+    if (mins < 60) { return `Will be sent in ${mins}m ${at}`; }
+    const hours = Math.round(diff / 3600000);
+    if (hours < 24) { return `Will be sent in ${hours}h ${at}`; }
+    return `Will be sent in ${Math.round(diff / 86400000)}d ${at}`;
 }
 
 /** Human label of the chat a schedule will land in. Prefers the chat title
@@ -142,28 +193,44 @@ async function targetChatLabel(context: vscode.ExtensionContext, s: Schedule): P
 
 // --- /cancel ------------------------------------------------------------------
 
-function handleCancelCommand(
+async function handleCancelCommand(
+    context: vscode.ExtensionContext,
     request: vscode.ChatRequest,
     scheduler: Scheduler,
     stream: vscode.ChatResponseStream
-): void {
+): Promise<void> {
     const num = Number(request.prompt.trim());
     if (!Number.isInteger(num) || num < 1) {
         stream.markdown('Usage: `/cancel <number>` — the numbers are shown by `/list`.');
         return;
     }
-    const sorted = [...scheduler.list()].sort((a, b) => a.fireAt - b.fireAt);
-    const target = sorted[num - 1];
-    if (!target) {
+    // Numbers are per chat group (as displayed); if several chats have a
+    // schedule with the same number, disambiguate via a quick pick.
+    const groups = await buildGroups(context, scheduler);
+    const candidates = groups.flatMap((g) =>
+        g.rows.filter((r) => r.num === num).map((r) => ({ g, r }))
+    );
+    if (!candidates.length) {
         stream.markdown(`There is no schedule #${num}. Run \`/list\` to see the current numbers.`);
         return;
     }
-    if (scheduler.remove(target.id)) {
-        stream.markdown(`🗑 Cancelled #${num} (${fmtDate(target.fireAt)}): \`${escapeCell(target.message)}\``);
-        const rest = sorted.length - 1;
-        if (rest > 0) { stream.markdown(`\n${rest} schedule(s) left — re-run \`/list\` for fresh numbers.`); }
-    } else {
-        stream.markdown(`Could not cancel #${num} — run \`/list\` for the current state.`);
+    if (candidates.length === 1) {
+        const { g, r } = candidates[0];
+        scheduler.remove(r.schedule.id);
+        stream.markdown(`🗑 Cancelled in “${g.label}”: ${relativePhrase(r.schedule)} “${escapeCell(r.schedule.message.slice(0, 60))}”`);
+        return;
+    }
+    const pick = await vscode.window.showQuickPick(
+        candidates.map((c) => ({
+            label: `$(trash) ${c.g.label}`,
+            detail: `${relativePhrase(c.r.schedule)} “${escapeCell(c.r.schedule.message.slice(0, 60))}”`,
+            row: c.r,
+        })),
+        { placeHolder: `Both chats have a #${num} — which one to cancel?` }
+    );
+    if (pick) {
+        scheduler.remove(pick.row.schedule.id);
+        stream.markdown(`🗑 Cancelled in “${pick.label.replace('$(trash) ', '')}”.`);
     }
 }
 
