@@ -73,12 +73,12 @@ function handleScheduleCommand(
         const parsed = parseWhen(when);
         const snapshot = buildSnapshot(chatContext.history);
         const s = scheduler.add(message, 'chat', parsed.at, parsed.repeat, snapshot);
+        const link = (command: string): string => `command:${command}?${encodeURIComponent(JSON.stringify([s.id]))}`;
         stream.markdown(
             `⏰ Scheduled for **${fmtDate(s.fireAt)}**${repeatSuffix(s)}.\n\n` +
             `Message: \`${s.message.replace(/`/g, "'")}\`\n\n` +
-            (snapshot
-                ? 'It will be delivered into **this conversation**: the extension finds the chat by its history snapshot and continues right where you left off. '
-                : 'It will be submitted to the chat panel automatically when the time comes. ')
+            `[🗑 Cancel](${link('chatbot.removeSchedule')}) · [⏱ Change time](${link('chatbot.rescheduleSchedule')})\n\n` +
+            'It will be delivered quietly into the chat you are looking at when it fires — no tabs, focus untouched.'
         );
     } catch (err) {
         stream.markdown(`⚠️ ${errorMessage(err)}`);

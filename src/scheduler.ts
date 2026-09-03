@@ -82,6 +82,22 @@ export class Scheduler implements vscode.Disposable {
         return true;
     }
 
+    /** Moves a schedule to a new fire time (and optionally a new repeat rule). */
+    reschedule(id: string, fireAt: number, repeat: RepeatRule): boolean {
+        const s = this.schedules.find((x) => x.id === id);
+        if (!s) { return false; }
+        s.fireAt = fireAt;
+        s.repeat = repeat;
+        const timer = this.timers.get(id);
+        if (timer) {
+            clearTimeout(timer);
+            this.timers.delete(id);
+        }
+        this.arm(s);
+        this.persist();
+        return true;
+    }
+
     /** Fires anything that became due while the window was unfocused/throttled. */
     checkDue(): void {
         const now = Date.now();

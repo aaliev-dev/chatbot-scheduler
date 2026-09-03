@@ -6,6 +6,15 @@ import { findSessionBySnapshot } from './sessionFinder';
 import { Delivery, Schedule } from './types';
 
 export function activate(context: vscode.ExtensionContext): void {
+    // Shared delay options for the clock button and "change time" flows.
+    const DELAY_OPTIONS: (vscode.QuickPickItem & { when: string })[] = [
+        { label: '$(clock) 15 минут', when: '15m' },
+        { label: '$(clock) 30 минут', when: '30m' },
+        { label: '$(clock) 1 час', when: '1h' },
+        { label: '$(clock) 2 часа', when: '2h' },
+        { label: '$(clock) 3 часа', when: '3h' },
+        { label: '$(calendar) Другое время…', when: 'custom' },
+    ];
     // Instrumentation goes to the exthost console log — survives even if the
     // extension dies mid-way, unlike the Output channel. Remove once stable.
     const trace = (msg: string): void => {
@@ -60,16 +69,14 @@ export function activate(context: vscode.ExtensionContext): void {
             if (s.history?.length) {
                 const found = await findSessionBySnapshot(context.storageUri, s.history);
                 if (found) {
-                    // Same chat found → open it and submit the message there.
-                    // revealIfOpened: if a tab for this chat already exists (e.g.
-                    // from a previous delivery) it is focused, not duplicated.
-                    await vscode.commands.executeCommand('vscode.open', found.resource, {
-                        revealIfOpened: true,
-                    });
+                    // Quiet delivery: submit into the chat the user is currently
+                    // looking at — no tab, no focus steal, draft preserved. In
+                    // the typical flow (schedule from a chat, stay in it) that
+                    // IS the originating chat.
                     await submitQuery(s.message);
                     return;
                 }
-                // Chat not found → continue the conversation in a fresh chat.
+                // Original chat is gone → continue the conversation in a fresh chat.
                 await vscode.commands.executeCommand('workbench.action.chat.newChat');
                 await submitQuery(s.message, s.history);
                 return;
@@ -120,14 +127,7 @@ export function activate(context: vscode.ExtensionContext): void {
     register('chatbot.insertSchedule', async (...args: unknown[]) => {
             trace(`insertSchedule invoked (args: ${JSON.stringify(args)?.slice(0, 200) ?? '[]'})`);
             try {
-            const DELAYS: (vscode.QuickPickItem & { when: string })[] = [
-                { label: '$(clock) 15 минут', when: '15m' },
-                { label: '$(clock) 30 минут', when: '30m' },
-                { label: '$(clock) 1 час', when: '1h' },
-                { label: '$(clock) 2 часа', when: '2h' },
-                { label: '$(clock) 3 часа', when: '3h' },
-            ];
-            const picked = await vscode.window.showQuickPick(DELAYS, {
+            const picked = await vscode.window.showQuickPick(DELAY_OPTIONS.filter(o => o.when !== 'custom'), {
                 placeHolder: 'Когда отправить сообщение?',
                 title: 'ChatBot: отложенная отправка',
             });
@@ -241,6 +241,54 @@ export function activate(context: vscode.ExtensionContext): void {
             if (sel) { remove(sel); }
         });
         qp.show();
+    });
+
+    // Inline buttons in the @bot confirmation message (command links).
+    // With an id arg — act on that schedule; without — fall back to the manager.
+    register('chatbot.removeSchedule', async (id?: string) => {
+        if (!id || !scheduler.remove(id)) {
+            void vscode.window.showWarningMessage('Chat Bot Scheduler: this schedule is already gone.');
+            return;
+        }
+        void vscode.window.showInformationMessage('🗑 Schedule cancelled.');
+    });
+
+    register('chatbot.rescheduleSchedule', async (id?: string) => {
+        if (!id) {
+            void vscode.window.showWarningMessage('Chat Bot Scheduler: this schedule is already gone.');
+            return;
+        }
+        const target = scheduler.list().find((s) => s.id === id);
+        if (!target) {
+            void vscode.window.showWarningMessage('Chat Bot Scheduler: this schedule is already gone.');
+            return;
+        }
+        const picked = await vscode.window.showQuickPick(DELAY_OPTIONS, {
+            placeHolder: `Новое время для «${target.message.slice(0, 40)}»`,
+            title: 'Chat Bot Scheduler: перенос отложенного сообщения',
+        });
+        if (!picked) { return; }
+
+        let parsed: { at: number; repeat: typeof target.repeat };
+        if (picked.when === 'custom') {
+            const when = await vscode.window.showInputBox({
+                title: 'Когда доставить',
+                placeHolder: 'in 1h 30m · at 17:30 · at 17:30 tomorrow · daily 09:00',
+            });
+            if (when === undefined) { return; }
+            try {
+                parsed = parseWhen(when);
+            } catch (err) {
+                void vscode.window.showErrorMessage(`Chat Bot Scheduler: ${err instanceof WhenParseError ? err.message : String(err)}`);
+                return;
+            }
+        } else {
+            parsed = parseWhen(picked.when);
+        }
+
+        if (scheduler.reschedule(id, parsed.at, parsed.repeat)) {
+            void vscode.window.showInformationMessage(`⏱ Rescheduled to ${fmtDate(parsed.at)}.`);
+        }
     });
 
     trace('activate complete — all commands registered');
