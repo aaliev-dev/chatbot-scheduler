@@ -2,7 +2,7 @@
   "name": "chatbot-scheduler",
   "displayName": "Chat Bot Scheduler",
   "description": "Telegram-style scheduled messages for VS Code Copilot Chat — delay any chat message by 15 minutes to 3 hours with a clock button, and it lands back in the same conversation",
-  "version": "0.8.0",
+  "version": "0.9.1",
   "publisher": "aliwodan",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -27,7 +27,6 @@
         "displayName": "Chat Bot Scheduler",
         "fullName": "Chat Bot Scheduler",
         "description": "Custom chat agent with delayed (Telegram-style) message scheduling",
-        "isSticky": true,
         "commands": [
           {
             "name": "schedule",
@@ -72,7 +71,7 @@
       {
         "command": "chatbot.listSchedulesActive",
         "title": "Chat Bot Scheduler: Show Scheduled Messages",
-        "icon": "$(bell-dot)"
+        "icon": "media/calendar-dot.svg"
       }
     ],
     "menus": {

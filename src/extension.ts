@@ -227,13 +227,13 @@ export function activate(context: vscode.ExtensionContext): void {
             }
         });
 
-    // Target chat label for a schedule: derived from its conversation
-    // snapshot — the first user prompt of the founding session identifies the
-    // chat naturally ("the chat about the job"). Schedules created outside a
-    // chat (@bot) have no snapshot and go to the focused chat.
+    // Target chat label for a schedule: prefers the chat title (workspace
+    // name for untitled sessions), then the first prompt of the conversation.
     const targetLabel = async (s: Schedule): Promise<string> => {
-        if (!s.history?.length) { return '→ focused chat'; }
+        const wsName = vscode.workspace.name ?? 'this workspace';
+        if (!s.history?.length) { return `→ ${wsName}`; }
         const found = await findSessionBySnapshot(context.storageUri, s.history);
+        if (found?.title) { return `→ ${found.title}`; }
         const firstPrompt = s.history[0].request.replace(/\s+/g, ' ').trim();
         if (!found) { return `→ (original chat deleted) «${trunc(firstPrompt, 24)}»`; }
         return `→ «${trunc(firstPrompt, 24)}»`;
