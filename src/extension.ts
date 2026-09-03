@@ -200,7 +200,7 @@ export function activate(context: vscode.ExtensionContext): void {
         trace(`insertSchedule invoked (args: ${JSON.stringify(args)?.slice(0, 200) ?? '[]'})`);
         const when = await pickPeriod();
         if (!when) { return; }
-        await runScheduleFlow(when);
+        await scheduleDirect(when);
     });
 
     register('chatbot.scheduleMessage', async () => {
