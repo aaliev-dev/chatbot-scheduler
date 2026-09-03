@@ -1,7 +1,6 @@
 import * as vscode from 'vscode';
 import { pickDefaultCopilotModel } from './copilot';
 import { parseWhen, splitWhenAndMessage, WhenParseError } from './parser';
-import { resolveDeliveryProbe } from './probe';
 import { Scheduler } from './scheduler';
 import { Schedule, SnapshotTurn } from './types';
 
@@ -27,10 +26,6 @@ export function registerChatParticipant(context: vscode.ExtensionContext, schedu
             }
             if (request.command === 'cancel') {
                 handleCancelCommand(request, scheduler, stream);
-                return {};
-            }
-            if (request.command === 'deliver') {
-                handleDeliverProbe(request, chatContext, scheduler, stream);
                 return {};
             }
             await handleChat(request, chatContext, stream, token);
@@ -78,12 +73,11 @@ function handleScheduleCommand(
         const parsed = parseWhen(when);
         const snapshot = buildSnapshot(chatContext.history);
         const s = scheduler.add(message, 'chat', parsed.at, parsed.repeat, snapshot);
-        stream.markdown(
-            `⏰ Scheduled for **${fmtDate(s.fireAt)}**${repeatSuffix(s)}.\n\n` +
-            `Message: \`${s.message.replace(/`/g, "'")}\`\n\n` +
-            'Delivered into **this conversation** — even if you switch to another chat before it fires.'
-        );
-        pushInlineButtons(stream, s.id);
+        // Deliberately muted one-liner: this confirmation appears in the user's
+        // conversation, so it must stay out of the way (no bold blocks,
+        // no buttons — stream.button chips render as dead bullets in the
+        // transcript). Cancellation lives in /list + /cancel.
+        stream.markdown(`${fmtConfirmation(when, s.fireAt)} — “${escapeCell(s.message)}”`);
     } catch (err) {
         stream.markdown(`⚠️ ${errorMessage(err)}`);
     }
@@ -130,17 +124,6 @@ function renderScheduleList(scheduler: Scheduler, stream: vscode.ChatResponseStr
         stream.markdown(`| ${i + 1} | ${fmtDate(s.fireAt)}${repeatSuffix(s)} | \`${escapeCell(s.message)}\` | ${s.delivery} |\n`);
     });
     stream.markdown('\nCancel one with `/cancel <number>`, e.g. `/cancel 2`.');
-    // A real 🗑 button per row (stream.button, feature-detected).
-    type ButtonValue = { command: string; title: string; arguments?: unknown[] };
-    const ctor = (vscode as unknown as Record<string, unknown>)['ChatResponseCommandButtonPart'] as
-        | (new (value: ButtonValue) => object)
-        | undefined;
-    const buttonStream = stream as unknown as { button?: (part: object) => unknown };
-    if (ctor && typeof buttonStream.button === 'function') {
-        all.forEach((s, i) => {
-            buttonStream.button?.(new ctor({ command: 'chatbot.removeSchedule', title: `🗑 #${i + 1}`, arguments: [s.id] }));
-        });
-    }
 }
 
 // --- /cancel ------------------------------------------------------------------
@@ -170,81 +153,6 @@ function handleCancelCommand(
     }
 }
 
-// --- /deliver (internal delivery probe) --------------------------------------
-
-/**
- * Checks whether the chat this probe landed in is the conversation the
- * schedule was created from: the snapshot's recent user prompts must appear,
- * in order, in the current chat history (extra turns after the schedule are
- * fine — containment, not equality).
- */
-function isSameConversation(
-    history: readonly (vscode.ChatRequestTurn | vscode.ChatResponseTurn)[],
-    snapshot: SnapshotTurn[]
-): boolean {
-    if (!snapshot.length) { return false; }
-    const current = history
-        .filter((t): t is vscode.ChatRequestTurn => t instanceof vscode.ChatRequestTurn)
-        .map((t) => t.prompt);
-    const needles = snapshot.map((t) => t.request).slice(-3);
-    let i = 0;
-    for (const prompt of current) {
-        if (i < needles.length && prompt === needles[i]) { i++; }
-    }
-    return i === needles.length;
-}
-
-function handleDeliverProbe(
-    request: vscode.ChatRequest,
-    chatContext: vscode.ChatContext,
-    scheduler: Scheduler,
-    stream: vscode.ChatResponseStream
-): void {
-    const id = request.prompt.trim();
-    const s = scheduler.list().find((x) => x.id === id);
-    if (!s || !s.history?.length) {
-        resolveDeliveryProbe(id, false);
-        stream.markdown('⚠️ Unknown delivery target.');
-        return;
-    }
-    const same = isSameConversation(chatContext.history, s.history);
-    resolveDeliveryProbe(id, same);
-    stream.markdown(same
-        ? '⏰ Scheduled message incoming right here…'
-        : '⏳ This is not the target chat — opening the original conversation…');
-}
-// --- inline action buttons -----------------------------------------------------
-
-/**
- * Real action buttons under a chat message.
- *
- * stream.button() + vscode.ChatResponseCommandButtonPart are newer than the
- * @types/vscode target this project compiles against, so they are accessed
- * via feature detection. Markdown `command:` links are not a fallback worth
- * rendering: the chat sanitizer strips them for non-built-in extensions
- * (that is why the first iteration of "inline buttons" was invisible).
- */
-function pushInlineButtons(stream: vscode.ChatResponseStream, scheduleId: string): void {
-    type ButtonValue = { command: string; title: string; arguments?: unknown[] };
-    const ctor = (vscode as unknown as Record<string, unknown>)['ChatResponseCommandButtonPart'] as
-        | (new (value: ButtonValue) => object)
-        | undefined;
-    const buttonStream = stream as unknown as { button?: (part: object) => unknown };
-
-    const buttons: ButtonValue[] = [
-        { command: 'chatbot.removeSchedule', title: '🗑 Cancel', arguments: [scheduleId] },
-        { command: 'chatbot.rescheduleSchedule', title: '⏱ Change time', arguments: [scheduleId] },
-    ];
-
-    if (ctor && typeof buttonStream.button === 'function') {
-        for (const value of buttons) {
-            buttonStream.button(new ctor(value));
-        }
-    } else {
-        // Very old VS Code: plain text hint instead of dead links.
-        stream.markdown('\n\nManage it with `@bot /list` and `@bot /cancel`.');
-    }
-}
 // --- plain chat --------------------------------------------------------------
 
 async function handleChat(
@@ -299,6 +207,16 @@ function errorMessage(err: unknown): string {
 
 function fmtDate(t: number): string {
     return new Date(t).toLocaleString();
+}
+
+/**
+ * Muted schedule confirmation: echoes the delay as commanded ("in 5 minutes"),
+ * with the resolved local time in parentheses for reference.
+ */
+function fmtConfirmation(when: string, fireAt: number): string {
+    const d = new Date(fireAt);
+    const time = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+    return `⏰ ${when.trim()} (${time})`;
 }
 
 function repeatSuffix(s: Schedule): string {
