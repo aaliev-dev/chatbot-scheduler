@@ -74,11 +74,19 @@ function handleScheduleCommand(
         const parsed = parseWhen(when);
         const snapshot = buildSnapshot(chatContext.history);
         const s = scheduler.add(message, 'chat', parsed.at, parsed.repeat, snapshot);
-        // Deliberately muted one-liner: this confirmation appears in the user's
-        // conversation, so it must stay out of the way (no bold blocks,
-        // no buttons — stream.button chips render as dead bullets in the
-        // transcript). Cancellation lives in /list + /cancel.
-        stream.markdown(`${fmtConfirmation(when, s.fireAt)} — “${escapeCell(s.message)}”`);
+        // Zero chat writes: the confirmation is a toast, and its action
+        // button cancels the schedule right from there (per user request).
+        void vscode.window
+            .showInformationMessage(
+                `${fmtConfirmation(when, s.fireAt)} — “${s.message}”`,
+                'Cancel'
+            )
+            .then((choice) => {
+                if (choice === 'Cancel') {
+                    scheduler.remove(s.id);
+                    void vscode.window.showInformationMessage('Schedule cancelled.');
+                }
+            });
     } catch (err) {
         stream.markdown(`⚠️ ${errorMessage(err)}`);
     }
