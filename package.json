@@ -2,7 +2,7 @@
   "name": "chatbot-extension",
   "displayName": "ChatBot",
   "description": "Custom chat agent for VS Code with Telegram-style delayed messages",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "aliwodan",
   "license": "MIT",
   "engines": {
