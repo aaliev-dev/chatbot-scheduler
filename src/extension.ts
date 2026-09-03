@@ -162,7 +162,7 @@ export function activate(context: vscode.ExtensionContext): void {
      *  prefill the template in the chat input. */
     const runScheduleFlow = async (when: string): Promise<void> => {
         try {
-            const prefix = `@bot /schedule ${when}`;
+            const prefix = `@bot /schedule in ${when}`;
             const draft = await readChatDraft();
             trace(
                 `  when=${when} draft=${draft === undefined ? 'unreadable' : JSON.stringify(draft.slice(0, 80))}`
