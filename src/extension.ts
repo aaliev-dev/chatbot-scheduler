@@ -34,9 +34,15 @@ export function activate(context: vscode.ExtensionContext): void {
     // 3. Plain: schedules created outside a chat (Command Palette) just go to
     //    the chat widget that last had focus.
     // ---------------------------------------------------------------------------
-    const submitQuery = (query: string, previousRequests?: { request: string; response: string }[]): Thenable<unknown> =>
+    const submitQuery = (
+        query: string,
+        previousRequests?: { request: string; response: string }[]
+    ): Thenable<unknown> =>
         vscode.commands.executeCommand('workbench.action.chat.open', {
             query,
+            // Never clobber the user's draft: submit this query while keeping
+            // whatever text is currently typed in the chat input box.
+            preserveInput: true,
             ...(previousRequests?.length ? { previousRequests: previousRequests.slice(-25) } : {}),
         });
 
@@ -55,7 +61,11 @@ export function activate(context: vscode.ExtensionContext): void {
                 const found = await findSessionBySnapshot(context.storageUri, s.history);
                 if (found) {
                     // Same chat found → open it and submit the message there.
-                    await vscode.commands.executeCommand('vscode.open', found.resource);
+                    // revealIfOpened: if a tab for this chat already exists (e.g.
+                    // from a previous delivery) it is focused, not duplicated.
+                    await vscode.commands.executeCommand('vscode.open', found.resource, {
+                        revealIfOpened: true,
+                    });
                     await submitQuery(s.message);
                     return;
                 }
@@ -182,38 +192,56 @@ export function activate(context: vscode.ExtensionContext): void {
         });
 
     register('chatbot.listSchedules', () => {
-            const qp = vscode.window.createQuickPick<vscode.QuickPickItem & { id: string }>();
-            const toItems = (): (vscode.QuickPickItem & { id: string })[] =>
-                [...scheduler.list()]
-                    .sort((a, b) => a.fireAt - b.fireAt)
-                    .map((s) => ({
-                        id: s.id,
-                        label: `$(clock) ${fmtDate(s.fireAt)}${repeatSuffix(s)}`,
-                        description: s.delivery,
-                        detail: s.message,
-                    }));
+        interface SchedulePickItem extends vscode.QuickPickItem {
+            id: string;
+        }
+        const deleteButton: vscode.QuickInputButton = {
+            iconPath: new vscode.ThemeIcon('trash'),
+            tooltip: 'Delete this schedule',
+        };
+        const qp = vscode.window.createQuickPick<SchedulePickItem>();
+        const toItems = (): SchedulePickItem[] =>
+            [...scheduler.list()]
+                .sort((a, b) => a.fireAt - b.fireAt)
+                .map((s, i) => ({
+                    id: s.id,
+                    label: `$(clock) ${fmtDate(s.fireAt)}${repeatSuffix(s)}`,
+                    description: s.delivery,
+                    detail: `#${i + 1} · ${s.message}`,
+                    buttons: [deleteButton],
+                }));
 
-            const items = toItems();
-            if (!items.length) {
-                void vscode.window.showInformationMessage('ChatBot: no scheduled messages.');
-                return;
+        const items = toItems();
+        if (!items.length) {
+            void vscode.window.showInformationMessage(
+                'Chat Bot Scheduler: no scheduled messages yet. Create one with the ⏱ button or ⌘⌥S.'
+            );
+            return;
+        }
+
+        const refreshOrHide = (): void => {
+            const rest = toItems();
+            if (rest.length) {
+                qp.items = rest;
+            } else {
+                qp.hide();
+                void vscode.window.showInformationMessage('Chat Bot Scheduler: all schedules deleted.');
             }
-            qp.placeholder = 'Select a schedule to cancel it';
-            qp.items = items;
-            qp.onDidAccept(() => {
-                const sel = qp.selectedItems[0];
-                if (!sel) { return; }
-                scheduler.remove(sel.id);
-                const rest = toItems();
-                if (rest.length) {
-                    qp.items = rest;
-                } else {
-                    qp.hide();
-                    void vscode.window.showInformationMessage('ChatBot: all schedules cancelled.');
-                }
-            });
-            qp.show();
+        };
+        const remove = (item: SchedulePickItem): void => {
+            scheduler.remove(item.id);
+            refreshOrHide();
+        };
+
+        qp.placeholder = 'Enter or 🗑 deletes the selected schedule';
+        qp.items = items;
+        qp.onDidTriggerItemButton((e) => remove(e.item as SchedulePickItem));
+        qp.onDidAccept(() => {
+            const sel = qp.selectedItems[0];
+            if (sel) { remove(sel); }
         });
+        qp.show();
+    });
 
     trace('activate complete — all commands registered');
 }

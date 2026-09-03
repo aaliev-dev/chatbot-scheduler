@@ -24,6 +24,10 @@ export function registerChatParticipant(context: vscode.ExtensionContext, schedu
                 renderScheduleList(scheduler, stream);
                 return {};
             }
+            if (request.command === 'cancel') {
+                handleCancelCommand(request, scheduler, stream);
+                return {};
+            }
             await handleChat(request, chatContext, stream, token);
         } catch (err) {
             stream.markdown(`⚠️ ${errorMessage(err)}`);
@@ -114,12 +118,40 @@ function responseText(turn: vscode.ChatResponseTurn): string {
 function renderScheduleList(scheduler: Scheduler, stream: vscode.ChatResponseStream): void {
     const all = [...scheduler.list()].sort((a, b) => a.fireAt - b.fireAt);
     if (!all.length) {
-        stream.markdown('No scheduled messages yet. Add one with `/schedule in 2h :: hello`. Or use **ChatBot: Schedule Message** from the Command Palette.');
+        stream.markdown('No scheduled messages yet. Add one with `/schedule in 2h :: hello`. Or use **Chat Bot Scheduler: Schedule Message** from the Command Palette.');
         return;
     }
-    stream.markdown('| When | Message | Delivery |\n|---|---|---|\n');
-    for (const s of all) {
-        stream.markdown(`| ${fmtDate(s.fireAt)}${repeatSuffix(s)} | \`${escapeCell(s.message)}\` | ${s.delivery} |\n`);
+    stream.markdown('| # | When | Message | Delivery |\n|---|---|---|---|\n');
+    all.forEach((s, i) => {
+        stream.markdown(`| ${i + 1} | ${fmtDate(s.fireAt)}${repeatSuffix(s)} | \`${escapeCell(s.message)}\` | ${s.delivery} |\n`);
+    });
+    stream.markdown('\nCancel one with `/cancel <number>`, e.g. `/cancel 2`.');
+}
+
+// --- /cancel ------------------------------------------------------------------
+
+function handleCancelCommand(
+    request: vscode.ChatRequest,
+    scheduler: Scheduler,
+    stream: vscode.ChatResponseStream
+): void {
+    const num = Number(request.prompt.trim());
+    if (!Number.isInteger(num) || num < 1) {
+        stream.markdown('Usage: `/cancel <number>` — the numbers are shown by `/list`.');
+        return;
+    }
+    const sorted = [...scheduler.list()].sort((a, b) => a.fireAt - b.fireAt);
+    const target = sorted[num - 1];
+    if (!target) {
+        stream.markdown(`There is no schedule #${num}. Run \`/list\` to see the current numbers.`);
+        return;
+    }
+    if (scheduler.remove(target.id)) {
+        stream.markdown(`🗑 Cancelled #${num} (${fmtDate(target.fireAt)}): \`${escapeCell(target.message)}\``);
+        const rest = sorted.length - 1;
+        if (rest > 0) { stream.markdown(`\n${rest} schedule(s) left — re-run \`/list\` for fresh numbers.`); }
+    } else {
+        stream.markdown(`Could not cancel #${num} — run \`/list\` for the current state.`);
     }
 }
 

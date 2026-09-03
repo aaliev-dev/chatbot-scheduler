@@ -2,7 +2,7 @@
   "name": "chatbot-scheduler",
   "displayName": "Chat Bot Scheduler",
   "description": "Telegram-style scheduled messages for VS Code Copilot Chat — delay any chat message by 15 minutes to 3 hours with a clock button, and it lands back in the same conversation",
-  "version": "0.4.2",
+  "version": "0.5.0",
   "publisher": "aliwodan",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -32,6 +32,10 @@
           {
             "name": "list",
             "description": "List scheduled messages"
+          },
+          {
+            "name": "cancel",
+            "description": "Cancel a scheduled message by number: /cancel 2 (numbers shown by /list)"
           }
         ]
       }
@@ -43,7 +47,8 @@
       },
       {
         "command": "chatbot.listSchedules",
-        "title": "Chat Bot Scheduler: Show Scheduled Messages"
+        "title": "Chat Bot Scheduler: Show Scheduled Messages",
+        "icon": "$(calendar)"
       },
       {
         "command": "chatbot.insertSchedule",
@@ -52,10 +57,15 @@
       }
     ],
     "menus": {
-      "chat/input/status": [
+      "view/title": [
         {
           "command": "chatbot.insertSchedule",
-          "when": "chatIsEnabled",
+          "when": "view == workbench.panel.chat.view.copilot",
+          "group": "navigation"
+        },
+        {
+          "command": "chatbot.listSchedules",
+          "when": "view == workbench.panel.chat.view.copilot",
           "group": "navigation"
         }
       ],
@@ -71,6 +81,12 @@
         "command": "chatbot.insertSchedule",
         "key": "ctrl+alt+s",
         "mac": "cmd+alt+s",
+        "when": "chatIsEnabled"
+      },
+      {
+        "command": "chatbot.listSchedules",
+        "key": "ctrl+alt+l",
+        "mac": "cmd+alt+l",
         "when": "chatIsEnabled"
       }
     ]
