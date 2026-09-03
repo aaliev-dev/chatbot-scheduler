@@ -86,6 +86,24 @@ Delivery works in three tiers — the first one that succeeds wins:
 - Check the installed version in the Extensions panel; each build here
   bumps the version on purpose.
 
+## Publishing to the Marketplace
+
+The repo ships a GitHub Action (`.github/workflows/publish.yml`) that publishes
+to the VS Code Marketplace on every GitHub **release**. One-time setup:
+
+1. Create a publisher at
+   [marketplace.visualstudio.com/manage](https://marketplace.visualstudio.com/manage)
+   (the `publisher` field in `package.json` must match its ID).
+2. Create a **Personal Access Token** on Azure DevOps:
+   [dev.azure.com → User settings → Personal access tokens](https://dev.azure.com/users/settings/tokens).
+   Scope: **Marketplace → Manage**. Set an expiry that suits you.
+3. Add the token as the repository secret **`VSCE_PAT`**
+   (GitHub → Settings → Secrets and variables → Actions).
+4. Bump `version` in `package.json`, push, then
+   *Releases → Draft a new release* — tag `v<version>`. The workflow does the rest.
+
+Manual alternative: `npx @vscode/vsce publish -p <TOKEN>`.
+
 ## Development
 
 ```bash
