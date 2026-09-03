@@ -90,11 +90,11 @@ Delivery works in three tiers — the first one that succeeds wins:
 
 ```bash
 npm install
-npm run compile          # or: npm run watch
+npm run compile            # or: npm run watch
 node scripts/make-icon.js  # regenerate media/icon.png (256×256, zero deps)
 printf 'y\n' | npx @vscode/vsce package --no-dependencies \
-  --allow-missing-repository -o chatbot-extension.vsix
-code --install-extension chatbot-extension.vsix --force
+  --allow-missing-repository -o chatbot-scheduler.vsix
+code --install-extension chatbot-scheduler.vsix --force
 # then: Developer: Reload Window
 ```
 
