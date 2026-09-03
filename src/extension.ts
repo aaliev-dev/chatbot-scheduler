@@ -157,44 +157,55 @@ export function activate(context: vscode.ExtensionContext): void {
         }
     };
 
-    // Clock button in the chat input status area:
-    // pick a delay → if the input has a draft, compose & submit the schedule
-    // command with it; if the input is empty, prefill the command template.
-    register('chatbot.insertSchedule', async (...args: unknown[]) => {
-            trace(`insertSchedule invoked (args: ${JSON.stringify(args)?.slice(0, 200) ?? '[]'})`);
-            try {
-            const picked = await vscode.window.showQuickPick(DELAY_OPTIONS.filter(o => o.when !== 'custom'), {
-                placeHolder: 'Когда отправить сообщение?',
-                title: 'ChatBot: отложенная отправка',
-            });
-            if (!picked) {
-                trace('  picker dismissed without a choice');
-                return;
-            }
-
-            const prefix = `@bot /schedule in ${picked.when}`;
+    /** Draft-aware schedule flow, shared by the clock keybinding and the
+     *  calendar's period rows: draft present → submit immediately; empty →
+     *  prefill the template in the chat input. */
+    const runScheduleFlow = async (when: string): Promise<void> => {
+        try {
+            const prefix = `@bot /schedule ${when}`;
             const draft = await readChatDraft();
             trace(
-                `  delay=${picked.when} draft=${draft === undefined ? 'unreadable' : JSON.stringify(draft.slice(0, 80))}`
+                `  when=${when} draft=${draft === undefined ? 'unreadable' : JSON.stringify(draft.slice(0, 80))}`
             );
             if (draft !== undefined && draft.trim()) {
-                // Draft exists → schedule it right away (submit immediately).
                 await vscode.commands.executeCommand('workbench.action.chat.open', {
                     query: `${prefix} :: ${draft.trim()}`,
                 });
             } else {
-                // Empty or unreadable input → just insert the template, no submit.
                 await vscode.commands.executeCommand('workbench.action.chat.open', {
                     query: `${prefix} :: `,
                     isPartialQuery: true,
                 });
             }
-            trace('  insertSchedule finished OK');
-            } catch (err) {
-                trace(`  insertSchedule FAILED: ${String(err)}`);
-                throw err;
-            }
+            trace('  schedule flow finished OK');
+        } catch (err) {
+            trace(`  schedule flow FAILED: ${String(err)}`);
+            throw err;
+        }
+    };
+
+    const pickPeriod = async (): Promise<string | undefined> => {
+        const picked = await vscode.window.showQuickPick(DELAY_OPTIONS, {
+            placeHolder: 'Когда отправить сообщение?',
+            title: 'Chat Bot Scheduler: отложенная отправка',
         });
+        if (!picked) { return undefined; }
+        if (picked.when === 'custom') {
+            const when = await vscode.window.showInputBox({
+                title: 'Когда отправить?',
+                placeHolder: 'in 1h 30m · at 17:30 · at 17:30 tomorrow · daily 09:00',
+            });
+            return when ?? undefined;
+        }
+        return picked.when;
+    };
+
+    register('chatbot.insertSchedule', async (...args: unknown[]) => {
+        trace(`insertSchedule invoked (args: ${JSON.stringify(args)?.slice(0, 200) ?? '[]'})`);
+        const when = await pickPeriod();
+        if (!when) { return; }
+        await runScheduleFlow(when);
+    });
 
     register('chatbot.scheduleMessage', async () => {
             const message = await vscode.window.showInputBox({
@@ -259,17 +270,13 @@ export function activate(context: vscode.ExtensionContext): void {
     const showScheduleManager = async (): Promise<void> => {
         interface SchedulePickItem extends vscode.QuickPickItem {
             id?: string;
+            /** Set on period rows: picking one starts a new schedule flow. */
+            when?: string;
         }
         const deleteButton: vscode.QuickInputButton = {
             iconPath: new vscode.ThemeIcon('trash'),
             tooltip: 'Delete this schedule',
         };
-        if (!scheduler.list().length) {
-            void vscode.window.showInformationMessage(
-                'Chat Bot Scheduler: no scheduled messages yet. Create one with the ⏱ button or ⌘⌥S.'
-            );
-            return;
-        }
 
         // Grouped exactly like @bot /list: chat-title sections, per-chat
         // numbering, "Will be sent in 15m (16:59)" rows, trash per row.
@@ -309,27 +316,67 @@ export function activate(context: vscode.ExtensionContext): void {
             return items;
         };
 
-        const qp = vscode.window.createQuickPick<SchedulePickItem>();
-        qp.items = await buildItems();
-
-        const refreshOrHide = async (): Promise<void> => {
-            if (scheduler.list().length) {
-                qp.items = await buildItems();
-            } else {
-                qp.hide();
-                void vscode.window.showInformationMessage('Chat Bot Scheduler: all schedules deleted.');
+        // Under the grouped list: period rows for scheduling something new.
+        const appendPeriodItems = (items: SchedulePickItem[]): void => {
+            items.push({
+                label: 'New scheduled message',
+                kind: vscode.QuickPickItemKind.Separator,
+            });
+            for (const o of DELAY_OPTIONS) {
+                items.push({ label: o.label, when: o.when, alwaysShow: true });
             }
         };
-        const remove = async (item: SchedulePickItem): Promise<void> => {
-            if (item.id) { scheduler.remove(item.id); }
-            await refreshOrHide();
+
+        const qp = vscode.window.createQuickPick<SchedulePickItem>();
+
+        const refresh = async (): Promise<void> => {
+            if (scheduler.list().length) {
+                const items = await buildItems();
+                appendPeriodItems(items);
+                qp.items = items;
+            } else {
+                qp.hide();
+            }
         };
 
-        qp.placeholder = 'Enter or 🗑 deletes the selected schedule';
+        // Idle calendar behaves like the clock did: straight to the picker.
+        if (!scheduler.list().length) {
+            const when = await pickPeriod();
+            if (when) { await runScheduleFlow(when); }
+            return;
+        }
+
+        {
+            const items = await buildItems();
+            appendPeriodItems(items);
+            qp.items = items;
+        }
+        qp.placeholder = 'Enter or 🗑 deletes the selected schedule · pick a period below to schedule new';
+        const remove = async (item: SchedulePickItem): Promise<void> => {
+            if (item.id) { scheduler.remove(item.id); }
+            await refresh();
+        };
+
         qp.onDidTriggerItemButton((e) => { void remove(e.item as SchedulePickItem); });
         qp.onDidAccept(async () => {
             const sel = qp.selectedItems[0];
-            if (sel) { await remove(sel); }
+            if (!sel) { return; }
+            if (sel.id) {
+                await remove(sel);
+                return;
+            }
+            // Period row → run the draft-aware schedule flow.
+            let when = sel.when;
+            if (when === 'custom') {
+                const typed = await vscode.window.showInputBox({
+                    title: 'Когда отправить?',
+                    placeHolder: 'in 1h 30m · at 17:30 · at 17:30 tomorrow · daily 09:00',
+                });
+                if (!typed) { qp.hide(); return; }
+                when = typed;
+            }
+            qp.hide();
+            if (when) { await runScheduleFlow(when); }
         });
         qp.show();
     };
