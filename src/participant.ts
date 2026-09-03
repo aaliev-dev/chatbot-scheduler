@@ -78,13 +78,12 @@ function handleScheduleCommand(
         const parsed = parseWhen(when);
         const snapshot = buildSnapshot(chatContext.history);
         const s = scheduler.add(message, 'chat', parsed.at, parsed.repeat, snapshot);
-        const link = (command: string): string => `command:${command}?${encodeURIComponent(JSON.stringify([s.id]))}`;
         stream.markdown(
             `⏰ Scheduled for **${fmtDate(s.fireAt)}**${repeatSuffix(s)}.\n\n` +
             `Message: \`${s.message.replace(/`/g, "'")}\`\n\n` +
-            `[🗑 Cancel](${link('chatbot.removeSchedule')}) · [⏱ Change time](${link('chatbot.rescheduleSchedule')})\n\n` +
             'Delivered into **this conversation** — even if you switch to another chat before it fires.'
         );
+        pushInlineButtons(stream, s.id);
     } catch (err) {
         stream.markdown(`⚠️ ${errorMessage(err)}`);
     }
@@ -131,6 +130,17 @@ function renderScheduleList(scheduler: Scheduler, stream: vscode.ChatResponseStr
         stream.markdown(`| ${i + 1} | ${fmtDate(s.fireAt)}${repeatSuffix(s)} | \`${escapeCell(s.message)}\` | ${s.delivery} |\n`);
     });
     stream.markdown('\nCancel one with `/cancel <number>`, e.g. `/cancel 2`.');
+    // A real 🗑 button per row (stream.button, feature-detected).
+    type ButtonValue = { command: string; title: string; arguments?: unknown[] };
+    const ctor = (vscode as unknown as Record<string, unknown>)['ChatResponseCommandButtonPart'] as
+        | (new (value: ButtonValue) => object)
+        | undefined;
+    const buttonStream = stream as unknown as { button?: (part: object) => unknown };
+    if (ctor && typeof buttonStream.button === 'function') {
+        all.forEach((s, i) => {
+            buttonStream.button?.(new ctor({ command: 'chatbot.removeSchedule', title: `🗑 #${i + 1}`, arguments: [s.id] }));
+        });
+    }
 }
 
 // --- /cancel ------------------------------------------------------------------
@@ -203,7 +213,38 @@ function handleDeliverProbe(
         ? '⏰ Scheduled message incoming right here…'
         : '⏳ This is not the target chat — opening the original conversation…');
 }
+// --- inline action buttons -----------------------------------------------------
 
+/**
+ * Real action buttons under a chat message.
+ *
+ * stream.button() + vscode.ChatResponseCommandButtonPart are newer than the
+ * @types/vscode target this project compiles against, so they are accessed
+ * via feature detection. Markdown `command:` links are not a fallback worth
+ * rendering: the chat sanitizer strips them for non-built-in extensions
+ * (that is why the first iteration of "inline buttons" was invisible).
+ */
+function pushInlineButtons(stream: vscode.ChatResponseStream, scheduleId: string): void {
+    type ButtonValue = { command: string; title: string; arguments?: unknown[] };
+    const ctor = (vscode as unknown as Record<string, unknown>)['ChatResponseCommandButtonPart'] as
+        | (new (value: ButtonValue) => object)
+        | undefined;
+    const buttonStream = stream as unknown as { button?: (part: object) => unknown };
+
+    const buttons: ButtonValue[] = [
+        { command: 'chatbot.removeSchedule', title: '🗑 Cancel', arguments: [scheduleId] },
+        { command: 'chatbot.rescheduleSchedule', title: '⏱ Change time', arguments: [scheduleId] },
+    ];
+
+    if (ctor && typeof buttonStream.button === 'function') {
+        for (const value of buttons) {
+            buttonStream.button(new ctor(value));
+        }
+    } else {
+        // Very old VS Code: plain text hint instead of dead links.
+        stream.markdown('\n\nManage it with `@bot /list` and `@bot /cancel`.');
+    }
+}
 // --- plain chat --------------------------------------------------------------
 
 async function handleChat(
