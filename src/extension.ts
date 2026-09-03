@@ -299,6 +299,8 @@ export function activate(context: vscode.ExtensionContext): void {
     // This is how the calendar stays grey while idle and highlighted when
     // there is anything pending.
     register('chatbot.listSchedules', () => { void showScheduleManager(); });
+    // Pending indicator next to the calendar: tiny filled dot, same theme
+    // style as every other codicon, appears only when schedules exist.
     register('chatbot.listSchedulesActive', () => { void showScheduleManager(); });
 
     const updateHasSchedules = (): void => {
