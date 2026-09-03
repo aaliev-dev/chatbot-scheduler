@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { pickDefaultCopilotModel } from './copilot';
 import { parseWhen, splitWhenAndMessage, WhenParseError } from './parser';
+import { resolveDeliveryProbe } from './probe';
 import { Scheduler } from './scheduler';
 import { Schedule, SnapshotTurn } from './types';
 
@@ -26,6 +27,10 @@ export function registerChatParticipant(context: vscode.ExtensionContext, schedu
             }
             if (request.command === 'cancel') {
                 handleCancelCommand(request, scheduler, stream);
+                return {};
+            }
+            if (request.command === 'deliver') {
+                handleDeliverProbe(request, chatContext, scheduler, stream);
                 return {};
             }
             await handleChat(request, chatContext, stream, token);
@@ -78,7 +83,7 @@ function handleScheduleCommand(
             `⏰ Scheduled for **${fmtDate(s.fireAt)}**${repeatSuffix(s)}.\n\n` +
             `Message: \`${s.message.replace(/`/g, "'")}\`\n\n` +
             `[🗑 Cancel](${link('chatbot.removeSchedule')}) · [⏱ Change time](${link('chatbot.rescheduleSchedule')})\n\n` +
-            'It will be delivered quietly into the chat you are looking at when it fires — no tabs, focus untouched.'
+            'Delivered into **this conversation** — even if you switch to another chat before it fires.'
         );
     } catch (err) {
         stream.markdown(`⚠️ ${errorMessage(err)}`);
@@ -153,6 +158,50 @@ function handleCancelCommand(
     } else {
         stream.markdown(`Could not cancel #${num} — run \`/list\` for the current state.`);
     }
+}
+
+// --- /deliver (internal delivery probe) --------------------------------------
+
+/**
+ * Checks whether the chat this probe landed in is the conversation the
+ * schedule was created from: the snapshot's recent user prompts must appear,
+ * in order, in the current chat history (extra turns after the schedule are
+ * fine — containment, not equality).
+ */
+function isSameConversation(
+    history: readonly (vscode.ChatRequestTurn | vscode.ChatResponseTurn)[],
+    snapshot: SnapshotTurn[]
+): boolean {
+    if (!snapshot.length) { return false; }
+    const current = history
+        .filter((t): t is vscode.ChatRequestTurn => t instanceof vscode.ChatRequestTurn)
+        .map((t) => t.prompt);
+    const needles = snapshot.map((t) => t.request).slice(-3);
+    let i = 0;
+    for (const prompt of current) {
+        if (i < needles.length && prompt === needles[i]) { i++; }
+    }
+    return i === needles.length;
+}
+
+function handleDeliverProbe(
+    request: vscode.ChatRequest,
+    chatContext: vscode.ChatContext,
+    scheduler: Scheduler,
+    stream: vscode.ChatResponseStream
+): void {
+    const id = request.prompt.trim();
+    const s = scheduler.list().find((x) => x.id === id);
+    if (!s || !s.history?.length) {
+        resolveDeliveryProbe(id, false);
+        stream.markdown('⚠️ Unknown delivery target.');
+        return;
+    }
+    const same = isSameConversation(chatContext.history, s.history);
+    resolveDeliveryProbe(id, same);
+    stream.markdown(same
+        ? '⏰ Scheduled message incoming right here…'
+        : '⏳ This is not the target chat — opening the original conversation…');
 }
 
 // --- plain chat --------------------------------------------------------------
