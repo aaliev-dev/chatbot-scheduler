@@ -13,7 +13,6 @@ export function activate(context: vscode.ExtensionContext): void {
         { label: '$(clock) 1 час', when: '1h' },
         { label: '$(clock) 2 часа', when: '2h' },
         { label: '$(clock) 3 часа', when: '3h' },
-        { label: '$(calendar) Другое время…', when: 'custom' },
     ];
     // Instrumentation goes to the exthost console log — survives even if the
     // extension dies mid-way, unlike the Output channel. Remove once stable.
@@ -157,31 +156,36 @@ export function activate(context: vscode.ExtensionContext): void {
         }
     };
 
-    /** Draft-aware schedule flow, shared by the clock keybinding and the
-     *  calendar's period rows: draft present → submit immediately; empty →
-     *  prefill the template in the chat input. */
-    const runScheduleFlow = async (when: string): Promise<void> => {
+    /** Direct scheduling: ask for the message, persist, toast with a Cancel
+     *  action. Does NOT touch the chat at all (no @bot writes, no bubbles —
+     *  the user explicitly wants chat informs out of the way). */
+    const scheduleDirect = async (when: string): Promise<void> => {
+        const message = await vscode.window.showInputBox({
+            title: `Что отправить (${when})?`,
+            placeHolder: 'Текст отложенного сообщения',
+        });
+        if (!message || !message.trim()) { return; }
+        let parsed;
         try {
-            const prefix = `@bot /schedule in ${when}`;
-            const draft = await readChatDraft();
-            trace(
-                `  when=${when} draft=${draft === undefined ? 'unreadable' : JSON.stringify(draft.slice(0, 80))}`
-            );
-            if (draft !== undefined && draft.trim()) {
-                await vscode.commands.executeCommand('workbench.action.chat.open', {
-                    query: `${prefix} :: ${draft.trim()}`,
-                });
-            } else {
-                await vscode.commands.executeCommand('workbench.action.chat.open', {
-                    query: `${prefix} :: `,
-                    isPartialQuery: true,
-                });
-            }
-            trace('  schedule flow finished OK');
+            parsed = parseWhen(when);
         } catch (err) {
-            trace(`  schedule flow FAILED: ${String(err)}`);
-            throw err;
+            void vscode.window.showErrorMessage(
+                `Chat Bot Scheduler: ${err instanceof WhenParseError ? err.message : String(err)}`
+            );
+            return;
         }
+        const s = scheduler.add(message.trim(), 'chat', parsed.at, parsed.repeat);
+        const d = new Date(s.fireAt);
+        const at = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+        const toast = (msg: string): Thenable<string | undefined> =>
+            vscode.window.showInformationMessage(msg, 'Cancel');
+        void toast(`Will be sent ${when} (${at}) — “${s.message}”`).then((choice) => {
+            if (choice === 'Cancel') {
+                scheduler.remove(s.id);
+                void vscode.window.showInformationMessage('Schedule cancelled.');
+            }
+        });
+        void parsed; // repeat is embedded in scheduler.add above via parsed
     };
 
     const pickPeriod = async (): Promise<string | undefined> => {
@@ -189,15 +193,7 @@ export function activate(context: vscode.ExtensionContext): void {
             placeHolder: 'Когда отправить сообщение?',
             title: 'Chat Bot Scheduler: отложенная отправка',
         });
-        if (!picked) { return undefined; }
-        if (picked.when === 'custom') {
-            const when = await vscode.window.showInputBox({
-                title: 'Когда отправить?',
-                placeHolder: 'in 1h 30m · at 17:30 · at 17:30 tomorrow · daily 09:00',
-            });
-            return when ?? undefined;
-        }
-        return picked.when;
+        return picked?.when;
     };
 
     register('chatbot.insertSchedule', async (...args: unknown[]) => {
@@ -342,7 +338,7 @@ export function activate(context: vscode.ExtensionContext): void {
         // Idle calendar behaves like the clock did: straight to the picker.
         if (!scheduler.list().length) {
             const when = await pickPeriod();
-            if (when) { await runScheduleFlow(when); }
+            if (when) { await scheduleDirect(when); }
             return;
         }
 
@@ -365,18 +361,9 @@ export function activate(context: vscode.ExtensionContext): void {
                 await remove(sel);
                 return;
             }
-            // Period row → run the draft-aware schedule flow.
-            let when = sel.when;
-            if (when === 'custom') {
-                const typed = await vscode.window.showInputBox({
-                    title: 'Когда отправить?',
-                    placeHolder: 'in 1h 30m · at 17:30 · at 17:30 tomorrow · daily 09:00',
-                });
-                if (!typed) { qp.hide(); return; }
-                when = typed;
-            }
+            // Period row → direct scheduling (no chat writes).
             qp.hide();
-            if (when) { await runScheduleFlow(when); }
+            if (sel.when) { await scheduleDirect(sel.when); }
         });
         qp.show();
     };
@@ -384,7 +371,17 @@ export function activate(context: vscode.ExtensionContext): void {
     // Single calendar button in the title bar — one icon, no state swapping
     // (the two-icon highlight caused two calendars to render side by side).
     // Pending schedules are communicated by the creation toast and /list.
+    // One calendar button, two colors: grey codicon when idle, the same
+    // official glyph painted red when schedules exist. The swap is driven by
+    // the chatbotHasSchedules context key (raw truthiness in when-clauses).
     register('chatbot.listSchedules', () => { void showScheduleManager(); });
+    register('chatbot.listSchedulesActive', () => { void showScheduleManager(); });
+
+    const updateHasSchedules = (): void => {
+        void vscode.commands.executeCommand('setContext', 'chatbotHasSchedules', scheduler.list().length > 0);
+    };
+    updateHasSchedules();
+    context.subscriptions.push(scheduler.onDidChange(updateHasSchedules));
 
     // Inline buttons in the @bot confirmation message (command links).
     // With an id arg — act on that schedule; without — fall back to the manager.
@@ -442,68 +439,6 @@ export function deactivate(): void {
 }
 
 // --- helpers ------------------------------------------------------------------
-
-/**
- * Reads the current text in the native chat input.
- *
- * Theory: there is no public API to read the chat input draft, but the input
- * is a Monaco editor, and generic editor commands route to the focused
- * editor. So we borrow the clipboard for a moment:
- *
- *   save clipboard → drop a sentinel → focusInput → selectAll → copy → read
- *
- * If the clipboard now differs from the sentinel, it holds the draft; if it is
- * still the sentinel, the input was empty (copy had nothing to overwrite
- * with). The saved clipboard content is restored in `finally`.
- *
- * Caveat, honestly: `clipboard.readText/writeText` are text-only. If the user
- * had a non-text payload (e.g. a screenshot) in the clipboard, it cannot be
- * saved or restored and is lost by this action.
- */
-const DRAFT_PROBE = '\u2063chatbot:draft-probe';
-
-async function readChatDraft(): Promise<string | undefined> {
-    let saved = '';
-    try {
-        saved = await vscode.env.clipboard.readText();
-    } catch {
-        saved = '';
-    }
-    try {
-        await vscode.env.clipboard.writeText(DRAFT_PROBE);
-        await clipboardBecomes((v) => v === DRAFT_PROBE, 300);
-
-        await vscode.commands.executeCommand('workbench.action.chat.focusInput');
-        await sleep(60); // let the input actually take focus
-        await vscode.commands.executeCommand('editor.action.selectAll');
-        await sleep(30);
-        await vscode.commands.executeCommand('editor.action.clipboardCopyAction');
-
-        // Empty input leaves the sentinel in place — 400ms is enough to see that.
-        const copied = await clipboardBecomes((v) => v !== DRAFT_PROBE && v !== '', 400);
-        return copied === DRAFT_PROBE || copied === '' ? '' : copied;
-    } catch {
-        return undefined;
-    } finally {
-        try { await vscode.env.clipboard.writeText(saved); } catch { /* best effort */ }
-    }
-}
-
-/** Polls the clipboard until `predicate` holds or timeout — Electron writes
- *  are occasionally asynchronous, so a bare read can race the write. */
-async function clipboardBecomes(predicate: (v: string) => boolean, timeoutMs: number): Promise<string> {
-    const deadline = Date.now() + timeoutMs;
-    let value = await vscode.env.clipboard.readText();
-    while (!predicate(value) && Date.now() < deadline) {
-        await sleep(40);
-        value = await vscode.env.clipboard.readText();
-    }
-    return value;
-}
-
-function sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 async function pickDelivery(): Promise<Delivery | undefined> {
     const pick = await vscode.window.showQuickPick<vscode.QuickPickItem & { value: Delivery }>([
