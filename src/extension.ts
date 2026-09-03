@@ -334,20 +334,10 @@ export function activate(context: vscode.ExtensionContext): void {
         qp.show();
     };
 
-    // One command, two faces: the title-bar icon switches to a "pending" bell
-    // (via the chatbotHasSchedules context key) whenever schedules exist.
-    // This is how the calendar stays grey while idle and highlighted when
-    // there is anything pending.
+    // Single calendar button in the title bar — one icon, no state swapping
+    // (the two-icon highlight caused two calendars to render side by side).
+    // Pending schedules are communicated by the creation toast and /list.
     register('chatbot.listSchedules', () => { void showScheduleManager(); });
-    // Pending indicator next to the calendar: tiny filled dot, same theme
-    // style as every other codicon, appears only when schedules exist.
-    register('chatbot.listSchedulesActive', () => { void showScheduleManager(); });
-
-    const updateHasSchedules = (): void => {
-        void vscode.commands.executeCommand('setContext', 'chatbotHasSchedules', scheduler.list().length > 0);
-    };
-    updateHasSchedules();
-    context.subscriptions.push(scheduler.onDidChange(updateHasSchedules));
 
     // Inline buttons in the @bot confirmation message (command links).
     // With an id arg — act on that schedule; without — fall back to the manager.
