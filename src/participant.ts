@@ -128,13 +128,16 @@ async function renderScheduleList(context: vscode.ExtensionContext, scheduler: S
     stream.markdown('\nCancel one with `/cancel <number>`, e.g. `/cancel 2`.');
 }
 
-/** Human label of the chat a schedule will land in, from its founding conversation. */
+/** Human label of the chat a schedule will land in. Prefers the chat title
+ *  (the one the UI shows, e.g. the workspace name), then the first prompt. */
 async function targetChatLabel(context: vscode.ExtensionContext, s: Schedule): Promise<string> {
-    if (!s.history?.length) { return 'focused chat'; }
+    const wsName = vscode.workspace.name ?? 'this workspace';
+    if (!s.history?.length) { return wsName; }
+    const found = await findSessionBySnapshot(context.storageUri, s.history);
+    if (found?.title) { return found.title; }
     const firstPrompt = s.history[0].request.replace(/\s+/g, ' ').trim();
     const short = firstPrompt.length > 24 ? `${firstPrompt.slice(0, 23)}…` : firstPrompt;
-    const found = await findSessionBySnapshot(context.storageUri, s.history);
-    return found ? `chat «${short}»` : `(original chat deleted) «${short}»`;
+    return found ? short : `(original chat deleted) ${short}`;
 }
 
 // --- /cancel ------------------------------------------------------------------
@@ -221,13 +224,13 @@ function fmtDate(t: number): string {
 }
 
 /**
- * Muted schedule confirmation: echoes the delay as commanded ("in 5 minutes"),
- * with the resolved local time in parentheses for reference.
+ * Muted schedule confirmation: "Will be sent in 15m (16:59)" — echoes the
+ * delay as commanded, with the resolved local time in parentheses.
  */
 function fmtConfirmation(when: string, fireAt: number): string {
     const d = new Date(fireAt);
     const time = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
-    return `⏰ ${when.trim()} (${time})`;
+    return `Will be sent ${when.trim()} (${time})`;
 }
 
 function repeatSuffix(s: Schedule): string {

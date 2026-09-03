@@ -18,6 +18,8 @@ export interface FoundSession {
     resource: vscode.Uri;
     /** How many snapshot prompts matched (1..needles). */
     score: number;
+    /** Human chat title from the session index, when available. */
+    title?: string;
 }
 
 /** Builds a `vscode-chat-session://local/...` URI; mirrors LocalChatSessionUri.forSession(). */
@@ -96,5 +98,32 @@ export async function findSessionBySnapshot(
         sessionId: best.sessionId,
         resource: localSessionResource(best.sessionId),
         score: best.score,
+        title: readSessionTitle(chatDir, best.sessionId),
     };
+}
+
+/**
+ * Human chat title, read from VS Code's session index
+ * (`state.vscdb` → key `chat.ChatSessionStore.index` → entries[id].title —
+ * the same title the chat UI shows, e.g. the workspace name for untitled
+ * sessions). Extracted with a regex over the raw sqlite bytes on purpose:
+ * the index is a small JSON blob stored as plain text, and pulling in a
+ * sqlite driver is not worth it.
+ */
+function readSessionTitle(chatDir: string, sessionId: string): string | undefined {
+    try {
+        const dbPath = path.join(chatDir, '..', 'state.vscdb');
+        const raw = require('fs').readFileSync(dbPath, 'utf8');
+        const m = raw.match(
+            new RegExp(`"sessionId":"${sessionId.replace(/[^a-zA-Z0-9-]/g, '')}","title":"((?:[^"\\\\]|\\\\.)*)"`)
+        );
+        if (!m) { return undefined; }
+        return JSON.parse(`"${m[1]}"`) as string;
+    } catch {
+        return undefined;
+    }
+}
+
+export function findSessionTitle(chatDir: string, sessionId: string): string | undefined {
+    return readSessionTitle(chatDir, sessionId);
 }
