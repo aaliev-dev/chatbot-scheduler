@@ -1,0 +1,130 @@
+{
+  "name": "chatbot-scheduler",
+  "displayName": "Chat Bot Scheduler",
+  "description": "Telegram-style scheduled messages for VS Code Copilot Chat — delay any chat message by 15 minutes to 3 hours with a clock button, and it lands back in the same conversation",
+  "version": "0.5.3",
+  "publisher": "aliwodan",
+  "license": "MIT",
+  "icon": "media/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/aaliev-dev/chatbot-scheduler"
+  },
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "Chat",
+    "Other"
+  ],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "chatParticipants": [
+      {
+        "id": "chatbot.scheduler",
+        "name": "bot",
+        "displayName": "Chat Bot Scheduler",
+        "fullName": "Chat Bot Scheduler",
+        "description": "Custom chat agent with delayed (Telegram-style) message scheduling",
+        "isSticky": true,
+        "commands": [
+          {
+            "name": "schedule",
+            "description": "Schedule a delayed message: /schedule in 2h :: your message"
+          },
+          {
+            "name": "list",
+            "description": "List scheduled messages"
+          },
+          {
+            "name": "cancel",
+            "description": "Cancel a scheduled message by number: /cancel 2 (numbers shown by /list)"
+          },
+          {
+            "name": "deliver",
+            "description": "(internal) delivery probe — routes the scheduled message to its chat"
+          }
+        ]
+      }
+    ],
+    "commands": [
+      {
+        "command": "chatbot.scheduleMessage",
+        "title": "Chat Bot Scheduler: Schedule Message"
+      },
+      {
+        "command": "chatbot.listSchedules",
+        "title": "Chat Bot Scheduler: Show Scheduled Messages",
+        "icon": "$(calendar)"
+      },
+      {
+        "command": "chatbot.insertSchedule",
+        "title": "Schedule message",
+        "icon": "$(clock)"
+      },
+      {
+        "command": "chatbot.removeSchedule",
+        "title": "Cancel a scheduled message (inline button)",
+        "enablement": "false"
+      },
+      {
+        "command": "chatbot.rescheduleSchedule",
+        "title": "Change delivery time (inline button)",
+        "enablement": "false"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "chatbot.insertSchedule",
+          "when": "view == workbench.panel.chat.view.copilot",
+          "group": "navigation"
+        },
+        {
+          "command": "chatbot.listSchedules",
+          "when": "view == workbench.panel.chat.view.copilot",
+          "group": "navigation"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "chatbot.insertSchedule",
+          "when": "false"
+        },
+        {
+          "command": "chatbot.removeSchedule",
+          "when": "false"
+        },
+        {
+          "command": "chatbot.rescheduleSchedule",
+          "when": "false"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "chatbot.insertSchedule",
+        "key": "ctrl+alt+s",
+        "mac": "cmd+alt+s",
+        "when": "chatIsEnabled"
+      },
+      {
+        "command": "chatbot.listSchedules",
+        "key": "ctrl+alt+l",
+        "mac": "cmd+alt+l",
+        "when": "chatIsEnabled"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/vscode": "^1.95.0",
+    "typescript": "^5.4.0"
+  }
+}
