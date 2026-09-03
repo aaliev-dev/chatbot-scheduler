@@ -1,6 +1,7 @@
 .vscode/**
 node_modules/**
 src/**
+.playwright-mcp/**
 .gitignore
 tsconfig.json
 README.md
