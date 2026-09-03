@@ -95,9 +95,23 @@ export function activate(context: vscode.ExtensionContext): void {
             // Cross-window guard: only one VS Code window delivers.
             if (s.delivery === 'chat' && !(await claimDelivery(s.id))) { return; }
 
-            // RESTORED quiet delivery (the state the user called "нормально"):
-            // a plain visible submit into the currently focused chat — no
-            // vscode.open sessions, no tab reveals, ZERO focus movement.
+            /** The user's two demands are mutually exclusive through the
+             *  public API, so BOTH shipping modes exist behind a setting:
+             *  - quiet: submit into the focused chat, zero focus movement;
+             *  - route: find the target chat by snapshot and open its
+             *    session (revealIfOpened — no duplicate tabs), which moves
+             *    focus only when the user is somewhere else. */
+            if (s.history?.length
+                && vscode.workspace.getConfiguration('chatBotScheduler').get<string>('deliveryMode') === 'route') {
+                const found = await findSessionBySnapshot(context.storageUri, s.history);
+                if (found) {
+                    await vscode.commands.executeCommand('vscode.open', found.resource, { revealIfOpened: true });
+                    await submitQuery(s.message);
+                    return;
+                }
+            }
+            // 'quiet' (default): plain visible submit into the focused chat —
+            // no vscode.open, no tab reveals, ZERO focus movement.
             await submitQuery(s.message);
         } catch (err) {
             try {
