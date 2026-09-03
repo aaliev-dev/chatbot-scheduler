@@ -6,6 +6,11 @@ import { findSessionBySnapshot } from './sessionFinder';
 import { Delivery, Schedule } from './types';
 
 export function activate(context: vscode.ExtensionContext): void {
+    // Lightweight diagnostics channel: visible in Output → "ChatBot", so
+    // "nothing happens" reports can be traced to a concrete step next time.
+    const log = vscode.window.createOutputChannel('ChatBot');
+    context.subscriptions.push(log);
+
     const scheduler = new Scheduler(context.globalState);
 
     // ---------------------------------------------------------------------------
@@ -81,6 +86,7 @@ export function activate(context: vscode.ExtensionContext): void {
         // pick a delay → if the input has a draft, compose & submit the schedule
         // command with it; if the input is empty, prefill the command template.
         vscode.commands.registerCommand('chatbot.insertSchedule', async () => {
+            log.appendLine(`[${new Date().toLocaleTimeString()}] insertSchedule invoked`);
             const DELAYS: (vscode.QuickPickItem & { when: string })[] = [
                 { label: '$(clock) 15 минут', when: '15m' },
                 { label: '$(clock) 30 минут', when: '30m' },
@@ -92,10 +98,16 @@ export function activate(context: vscode.ExtensionContext): void {
                 placeHolder: 'Когда отправить сообщение?',
                 title: 'ChatBot: отложенная отправка',
             });
-            if (!picked) { return; }
+            if (!picked) {
+                log.appendLine('  picker dismissed without a choice');
+                return;
+            }
 
             const prefix = `@bot /schedule in ${picked.when}`;
             const draft = await readChatDraft();
+            log.appendLine(
+                `  delay=${picked.when} draft=${draft === undefined ? 'unreadable' : JSON.stringify(draft.slice(0, 80))}`
+            );
             if (draft !== undefined && draft.trim()) {
                 // Draft exists → schedule it right away (submit immediately).
                 await vscode.commands.executeCommand('workbench.action.chat.open', {
