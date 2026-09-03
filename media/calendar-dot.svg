@@ -1,0 +1,6 @@
+<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Calendar base (codicon "calendar" shape, currentColor adapts to theme) -->
+  <path fill="currentColor" d="M14.5 2H1.5L1 2.5v11l.5.5h13l.5-.5v-11L14.5 2zM2 5h12v8H2V5zm0-2h12v1H2V3zM11.5 1.5a.5.5 0 0 1 .5.5v1a.5.5 0 0 1-1 0V2a.5.5 0 0 1 .5-.5zm-7 0a.5.5 0 0 1 .5.5v1a.5.5 0 0 1-1 0V2a.5.5 0 0 1 .5-.5z"/>
+  <!-- Notification dot: filled accent, top-right corner -->
+  <circle cx="12.75" cy="3.25" r="2.75" fill="#F14C4C"/>
+</svg>
