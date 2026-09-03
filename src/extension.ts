@@ -1,7 +1,6 @@
 import * as vscode from 'vscode';
 import { parseWhen, WhenParseError } from './parser';
 import { registerChatParticipant } from './participant';
-import { waitForDeliveryProbe } from './probe';
 import { Scheduler } from './scheduler';
 import { findSessionBySnapshot } from './sessionFinder';
 import { Delivery, Schedule } from './types';
@@ -56,26 +55,6 @@ export function activate(context: vscode.ExtensionContext): void {
             ...(previousRequests?.length ? { previousRequests: previousRequests.slice(-25) } : {}),
         });
 
-    /**
-     * Asks "@bot /deliver <id>" through the quiet chat command — the probe
-     * lands in the chat the user is currently looking at. The participant
-     * compares that chat with the target conversation snapshot and answers.
-     * true → user is in the target chat; false → not; undefined → timeout.
-     */
-    const probeTargetChat = async (id: string): Promise<boolean | undefined> => {
-        let waiting: Promise<boolean | undefined>;
-        try {
-            waiting = waitForDeliveryProbe(id, 5000);
-            await vscode.commands.executeCommand('workbench.action.chat.open', {
-                query: `@bot /deliver ${id}`,
-                preserveInput: true,
-            });
-            return await waiting;
-        } catch {
-            return undefined;
-        }
-    };
-
     const deliver = async (s: Schedule): Promise<void> => {
         if (s.delivery === 'notification') {
             void vscode.window
@@ -87,34 +66,22 @@ export function activate(context: vscode.ExtensionContext): void {
         }
 
         try {
+            // Quiet delivery: submit into the chat the user is looking at.
+            // No probes (they spammed the conversation), no session opens, no
+            // focus stealing, draft preserved. The snapshot still does useful
+            // work: if the snapshot's chat no longer exists on disk (deleted),
+            // continue the dialogue in a fresh chat seeded with that history
+            // so the message never lands in a contextless void.
             if (s.history?.length) {
-                // 1. Probe where the user is.
-                const inTarget = await probeTargetChat(s.id);
-                if (inTarget === true) {
-                    // User is IN the target chat → quiet delivery right here.
-                    await submitQuery(s.message);
-                    return;
-                }
-                if (inTarget === false) {
-                    // User is elsewhere → route to the target conversation.
-                    const found = await findSessionBySnapshot(context.storageUri, s.history);
-                    if (found) {
-                        await vscode.commands.executeCommand('vscode.open', found.resource, {
-                            revealIfOpened: true,
-                        });
-                        await submitQuery(s.message);
-                        return;
-                    }
-                    // Target chat deleted → continue the dialogue in a fresh chat.
+                const found = await findSessionBySnapshot(context.storageUri, s.history);
+                if (!found) {
                     await vscode.commands.executeCommand('workbench.action.chat.newChat');
                     await submitQuery(s.message, s.history);
                     return;
                 }
-                // probe timed out → quiet fallback (previous behavior)
             }
             await submitQuery(s.message);
         } catch (err) {
-            // Last resort: plain submit to the focused chat.
             try {
                 await submitQuery(s.message);
             } catch {

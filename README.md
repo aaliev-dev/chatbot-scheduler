@@ -45,17 +45,15 @@ Manual form, in chat:
 
 ## Where a scheduled message lands
 
-Delivery works in three tiers — the first one that succeeds wins:
+Delivery is quiet by design — no tab opens, no focus stealing, and any draft
+you were typing stays intact:
 
-1. **The same chat.** When you schedule from `@bot`, the extension takes a
-   snapshot of the conversation. On fire it scans the stored chat sessions
-   on disk, finds the chat whose history matches the snapshot, opens that
-   exact chat, and submits the message there.
-2. **Conversation continuation.** If the original chat was deleted or the
-   storage format changed, a new chat is opened seeded with the captured
-   history, and the message is submitted at the end.
-3. **Focused chat.** Schedules created from the Command Palette are simply
-   submitted into the chat that last had focus.
+1. **The focused chat.** The message is submitted into the chat that currently
+   has focus. In the normal flow (schedule from a chat, stay in it) that is
+   the conversation you scheduled from.
+2. **Conversation continuation.** If the original conversation no longer
+   exists on disk (chat deleted), a new chat is opened seeded with the
+   captured history, and the message is submitted at the end.
 
 ## Limitations (honest ones)
 
