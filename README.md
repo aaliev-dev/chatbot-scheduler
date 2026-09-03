@@ -1,112 +1,124 @@
-# ChatBot Extension
+# Chat Bot Scheduler
 
-Кастомный чат-агент для VS Code с **отложенными сообщениями в стиле Telegram**:
-написал «проверь TODO-шники», поставил `in 2h` — и через два часа сообщение
-само отправится в чат.
+Telegram-style scheduled messages for the built-in VS Code Copilot Chat.
+Type a message, hit the ⏱ clock button, pick a delay — and your message is
+delivered into **the same conversation** hours later, exactly like
+scheduling a message in Telegram.
 
-## Что внутри
+## Features
 
-Расширение работает в трёх режимах одновременно:
+| Feature | Where |
+|---|---|
+| ⏱ **Clock shortcut** — pick a delay, schedule the current draft in one click | Toolbar beneath the chat input |
+| `@bot` chat participant — talk to it, or use `/schedule` and `/list` slash commands | Native chat panel |
+| Command Palette entries for scheduling without touching the chat | `Chat Bot Scheduler: Schedule Message` |
+| Delivery into the originating chat (matched by conversation snapshot) | Automatic on fire |
+| Persistent, catch-up-safe scheduler — schedules survive window reloads and app restarts | Storage-backed |
 
-| Режим | Что это | Где |
-|---|---|---|
-| **Дополнить** | Свой агент `@bot` в нативном чате, со слэш-командами `/schedule`, `/list` | Встроенная Chat-панель |
-| **Заменить** | Полностью свой чат-UI (webview) + управление шедулами | Иконка ChatBot в Activity Bar |
-| **Шедулер** | Отложенные и повторяющиеся сообщения | Везде :) |
+## Quick start
 
-## Шедул сообщений — быстрый старт
+1. Open the Copilot Chat panel.
+2. Type a message in the input box.
+3. Click the ⏱ button beneath the input → pick `15 minutes … 3 hours`
+   → the message is scheduled immediately (the bot confirms with ⏰).
+4. If the input was empty, the command template
+   `@bot /schedule in 2h :: ` is pre-filled instead — type the message
+   after `::` and press Enter.
+
+Manual form, in chat:
 
 ```
-# в нативном чате:
-@bot /schedule in 2h :: @bot summarize what changed in the workspace
+@bot /schedule in 2h :: summarize what changed in the workspace
 @bot /list
-
-# кнопка ⏰ (часики) в тулбаре под полем ввода чата — вставляет "@bot /schedule in "
-
-# или из Command Palette:
-ChatBot: Schedule Message   →  сообщение  →  "in 2h"  →  куда доставить
-ChatBot: Show Scheduled Messages
 ```
 
-### Куда попадает сообщение при срабатывании
+## Time syntax
 
-Доставка в чат работает в три ступени (первая сработавшая побеждает):
-
-1. **Тот же чат.** При `/schedule` расширение снимает слепок переписки этого
-   чата. При срабатывании оно сканирует сохранённые сессии на диске
-   (`workspaceStorage/<ws>/chatSessions/`), находит чат по совпадению последних
-   реплик, открывает **его** (`vscode.open` + `vscode-chat-session://` URI) и
-   отправляет сообщение туда.
-2. **Продолжение переписки.** Если исходный чат удалён или формат хранилища
-   изменился — открывается новый чат, в который пересаживается вся история
-   диалога (`previousRequests`), и сообщение отправляется в конец.
-3. **Обычная отправка** — в чат, который был в фокусе последним
-   (`lastFocusedWidget`). Используется для шедулов, созданных из Command Palette.
-
-### Синтаксис времени
-
-| Формат | Пример | Смысл |
+| Format | Example | Meaning |
 |---|---|---|
-| `in <дюрация>` | `in 2h`, `in 1h 30m`, `in 2d` | задержка от текущего момента |
-| `at HH:MM` | `at 17:30`, `at 5:30pm` | сегодня (если прошло — завтра) |
-| `at HH:MM tomorrow` | `at 17:30 tomorrow` | завтра в указанное время |
-| `at <дата> HH:MM` | `at 2026-09-05 10:00` | точная дата и время |
-| `daily HH:MM` | `daily 09:30` | повторяется каждый день |
-| ISO | `2026-09-05T10:00:00` | всё, что понимает `Date.parse` |
+| `in <duration>` | `in 2h`, `in 1h 30m`, `in 2d` | delay from now |
+| `at HH:MM` | `at 17:30`, `at 5:30pm` | today (or tomorrow if already past) |
+| `at HH:MM tomorrow` | `at 17:30 tomorrow` | tomorrow at the given time |
+| `at <date> HH:MM` | `at 2026-09-05 10:00` | exact date and time |
+| `daily HH:MM` | `daily 09:30` | recurring every day |
+| ISO timestamp | `2026-09-05T10:00:00` | anything `Date.parse` understands |
 
-### Что происходит при срабатывании
+## Where a scheduled message lands
 
-- **Send to Chat** — открывается нативная чат-панель и сообщение отправляется
-  как обычный запрос. Префиксы работают: `@bot …` уйдёт нашему агенту,
-  `#file.md` прикрепит файл, `@workspace` — встроенному.
-- **Notification** — просто всплывашка с текстом.
+Delivery works in three tiers — the first one that succeeds wins:
 
-## Как устроен шедулер (теория простыми словами)
+1. **The same chat.** When you schedule from `@bot`, the extension takes a
+   snapshot of the conversation. On fire it scans the stored chat sessions
+   on disk, finds the chat whose history matches the snapshot, opens that
+   exact chat, and submits the message there.
+2. **Conversation continuation.** If the original chat was deleted or the
+   storage format changed, a new chat is opened seeded with the captured
+   history, and the message is submitted at the end.
+3. **Focused chat.** Schedules created from the Command Palette are simply
+   submitted into the chat that last had focus.
 
-Extension host VS Code — это Node-процесс, который живёт, **пока открыто окно**.
-Из этого следуют четыре решения в коде:
+## Limitations (honest ones)
 
-1. **Персистентность.** Таймеры (`setTimeout`) умирают при перезагрузке окна,
-   поэтому шедулы хранятся в `globalState` (JSON в профиле пользователя) и
-   пересоздаются на каждой активации (`src/scheduler.ts`, `restore()`).
-2. **Догон пропущенного.** Если одноразовое сообщение «протухло», пока VS Code
-   был закрыт, — оно отправится при следующем запуске (как исходящее сообщение
-   в Telegram, когда ты снова онлайн). Повторяющиеся — только следующий запуск,
-   без бэкфилла.
-3. **Catch-up по фокусу.** В свёрнутых окнах браузер троттлит таймеры, поэтому
-   при возврате фокуса (`onDidChangeWindowState`) вызывается `checkDue()`.
-4. **Ограничение `setTimeout`.** Максимальная задержка — `2^31 - 1` мс (~24.8
-   дней). Более длинные задержки клампятся и перевзводятся на промежуточном
-   «преждевременном» пробуждении (`handleFire` → `arm`).
+- **Session matching reads VS Code's internal chat storage**
+  (`workspaceStorage/<ws>/chatSessions/`). This is not a public API and can
+  break on VS Code updates — in the worst case the extension falls back to
+  tier 2 or 3 above.
+- **Reading the input draft uses the clipboard.** There is no public API to
+  read the chat input box, so the clock button borrows the clipboard for a
+  moment (save → probe marker → select-all → copy → read → restore). If the
+  clipboard held a **non-text payload (e.g. a screenshot), it is lost** —
+  the clipboard API is text-only.
+- **Attachments are not part of a draft.** Files, screenshots and tool chips
+  attached to the input are not captured; only the text of the message is
+  scheduled.
+- The clock button lives in the chat input status area (rightmost end of the
+  toolbar beneath the input). VS Code does not offer a stable menu inside
+  the input row itself.
 
-## Разработка
+## Troubleshooting
+
+- After installing a new VSIX, **reload the window** (`Developer: Reload
+  Window`) — re-installing an extension with the same version does not swap
+  the running code.
+- Every action is logged to the **Output → Chat Bot** channel (and to the
+  extension host console log): `insertSchedule invoked`, picked delay,
+  captured draft, delivery result.
+- Check the installed version in the Extensions panel; each build here
+  bumps the version on purpose.
+
+## Development
 
 ```bash
 npm install
-npm run compile   # или npm run watch
-# затем F5 — запустит Extension Development Host
+npm run compile          # or: npm run watch
+node scripts/make-icon.js  # regenerate media/icon.png (256×256, zero deps)
+printf 'y\n' | npx @vscode/vsce package --no-dependencies \
+  --allow-missing-repository -o chatbot-extension.vsix
+code --install-extension chatbot-extension.vsix --force
+# then: Developer: Reload Window
 ```
 
-### Структура
+### Architecture
 
 ```
 src/
-  types.ts       — интерфейсы (Schedule, Delivery, RepeatRule)
-  parser.ts      — парсер времени ("in 2h", "at 17:30", "daily 09:00")
-  scheduler.ts   — персистентный шедулер с догоном и перевзводом
-  copilot.ts     — выбор модели через vscode.lm
-  participant.ts — @bot в нативном чате (дополнение)
-  chatView.ts    — свой чат-UI в webview (замена) + менеджер шедулов
-  extension.ts   — сборка: команды, доставка, события окна
+  types.ts          Schedule, Delivery, RepeatRule, SnapshotTurn
+  parser.ts         "in 2h" / "at 17:30" / "daily 09:00" time parser
+  scheduler.ts      persistent timer manager: restore, catch-up, re-arm
+  sessionFinder.ts  finds a stored chat session by conversation snapshot
+  participant.ts    @bot chat participant (chat, /schedule, /list)
+  copilot.ts        default Copilot model lookup (vscode.lm)
+  extension.ts      commands, clock button, delivery tiers, diagnostics
+scripts/
+  make-icon.js      generates the marketplace icon (pure Node, no deps)
 ```
 
-## Ограничения / что можно развить
+Scheduler hardening details (why it survives reloads):
 
-- Доставка в чат идёт через встроенную команду `workbench.action.chat.open` —
-  она открывает панель и отправляет запрос. Прямого API «отправить сообщение в
-  существующий тред чата» у VS Code нет.
-- Задержки считаются по времени APR extension host: если окно закрыто, точность
-  «в 17:30» — только при следующем запуске окна.
-- Модель для чата берётся через `vscode.lm.selectChatModels` (нужен вход в
-  GitHub Copilot); токен-хуки, RAG и инструменты встроенного чата здесь не
-  подключены — это сознательно, для ясности каркаса.
+- schedules are persisted in `globalState` and re-armed on activation;
+- a one-shot schedule that became due while VS Code was closed fires
+  immediately on next start (like a queued Telegram message);
+- recurring schedules jump to the next occurrence (no backfill spam);
+- timers are re-checked when the window regains focus (background windows
+  throttle timers);
+- delays beyond `2^31 − 1` ms (~24.8 days) are clamped and re-armed.
