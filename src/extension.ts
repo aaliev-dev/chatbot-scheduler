@@ -48,9 +48,10 @@ export function activate(context: vscode.ExtensionContext): void {
     ): Thenable<unknown> =>
         vscode.commands.executeCommand('workbench.action.chat.open', {
             query,
-            // Never clobber the user's draft: submit this query while keeping
-            // whatever text is currently typed in the chat input box.
-            preserveInput: true,
+            // NO preserveInput here: per VS Code semantics it submits the
+            // query as a maintenance action that does NOT render as a user
+            // message — deliveries were literally invisible with it. A
+            // scheduled message must be VISIBLE in the target chat.
             ...(previousRequests?.length ? { previousRequests: previousRequests.slice(-25) } : {}),
         });
 
